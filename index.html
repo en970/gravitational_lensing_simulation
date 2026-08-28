@@ -16,7 +16,10 @@
   <div class="overlay">
     <header class="masthead">
       <h1>Gravitational Lensing</h1>
-      <a class="source" href="https://github.com/en970/gravitational_lensing_simulation" target="_blank" rel="noopener">Source</a>
+      <div class="masthead-actions">
+        <button class="pill" id="ambient-toggle" type="button" aria-pressed="false">Ambient</button>
+        <a class="source" href="https://github.com/en970/gravitational_lensing_simulation" target="_blank" rel="noopener">Source</a>
+      </div>
     </header>
 
     <p class="hint" id="hint">
@@ -26,8 +29,6 @@
 
     <div class="panel">
       <div class="picker" id="picker" role="group" aria-label="Background"></div>
-      <button class="fit-toggle" id="fit-toggle" type="button" aria-pressed="true" hidden>Fit</button>
-      <button class="fit-toggle" id="ambient-toggle" type="button" aria-pressed="false">Ambient</button>
 
       <div class="sliders">
         <div class="control">

@@ -68,11 +68,18 @@
   var DEPTH_NEAR = 0.16;
   var DEPTH_FAR  = 3.60;
 
-  var STEPS_MAX   = 26;
-  var STEPS_MIN   = 8;
-  var STEPS_START_HIGH = 16;
-  var STEPS_START_LOW  = 11;
-  var SCALE_MIN   = 0.55;
+  /* Depth sample count is chosen once for the device and never changed. It
+     cannot serve as a quality dial: the volume is cut into 26 shells and a
+     sample maps to floor(i * 26/steps), so lowering the count does not thin
+     the sampling evenly — it lands on a different set of shells. Going from 18
+     samples to 17 drops 8 shells and picks up 7 others, and half the sky is
+     rebuilt in place. Render scale is the only safe dial, because it leaves
+     the simulation coordinates untouched: simW = 600 * w / min(w, h) is
+     invariant when w and h scale together, so objects keep their positions and
+     only the sampling density changes. */
+  var STEPS_HIGH  = 17;
+  var STEPS_LOW   = 10;
+  var SCALE_MIN   = 0.50;
 
   var PHOTO_DISTANCE = 1.5;
 
@@ -375,7 +382,6 @@ void main() {
     var distIn   = document.getElementById('dist-slider');
     var distOut  = document.getElementById('dist-value');
     var picker   = document.getElementById('picker');
-    var fitBtn   = document.getElementById('fit-toggle');
     var ambBtn   = document.getElementById('ambient-toggle');
     var creditEl = document.getElementById('credit');
     var hint     = document.getElementById('hint');
@@ -427,7 +433,7 @@ void main() {
     gl.uniform1f(u.uFar, DEPTH_FAR);
     gl.uniform1f(u.uCellSize, 38.0);
     gl.uniform1f(u.uFill, 0.13);
-    var steps = highRes ? STEPS_START_HIGH : STEPS_START_LOW;
+    var steps = highRes ? STEPS_HIGH : STEPS_LOW;
     gl.uniform1i(u.uSteps, steps);
     gl.uniform1f(u.uPhotoDist, PHOTO_DISTANCE);
 
@@ -443,7 +449,6 @@ void main() {
       lensPlaced: false,
       mode: 0,
       photoAspect: 1,
-      fit: false,
       renderScale: 1.0,
       ambient: false
     };
@@ -479,12 +484,11 @@ void main() {
       gl.viewport(0, 0, w, h);
     }
 
-    /* Photograph extent in simulation units. "Fit" shows the whole image,
-       letterboxed; "Fill" covers the viewport and crops the long edge. */
+    /* Photograph extent in simulation units: always covering the viewport,
+       cropping whatever the long edge does not need. */
     function photoField() {
       var a = st.photoAspect;
-      var s = st.fit ? Math.min(st.simW / a, st.simH)
-                     : Math.max(st.simW / a, st.simH);
+      var s = Math.max(st.simW / a, st.simH);
       return [s * a, s];
     }
 
@@ -575,12 +579,6 @@ void main() {
       });
     }
 
-    function updateFitButton() {
-      fitBtn.textContent = st.fit ? 'Fit' : 'Fill';
-      fitBtn.setAttribute('aria-pressed', st.fit ? 'true' : 'false');
-      fitBtn.hidden = st.mode !== 1;
-    }
-
     /* Photographs load in two stages. A small preview arrives almost at once
        and is shown immediately; the full-resolution file follows and replaces
        it. Both requests start together, and a late preview never overwrites a
@@ -602,7 +600,6 @@ void main() {
         st.mode = 0;
         setCredit(bg);
         showNotice('');
-        updateFitButton();
         return;
       }
 
@@ -626,7 +623,6 @@ void main() {
           applied = rank;
           st.mode = 1;
           setCredit(bg);
-          updateFitButton();
           showNotice(isFull ? '' : 'Sharpening ' + bg.label);
         };
         img.onerror = function () {
@@ -653,12 +649,6 @@ void main() {
       b.setAttribute('aria-pressed', 'false');
       b.addEventListener('click', function () { noteInteraction(); selectBackground(bg); });
       picker.appendChild(b);
-    });
-
-    fitBtn.addEventListener('click', function () {
-      st.fit = !st.fit;
-      updateFitButton();
-      noteInteraction();
     });
 
     ambBtn.addEventListener('click', function () { setAmbient(!st.ambient); });
@@ -763,19 +753,12 @@ void main() {
         frameAvg += (Math.min(raw, 100) - frameAvg) * 0.1;
         if (tuneBudget > 0 && --tuneIn <= 0) {
           tuneIn = 60;
-          if (frameAvg > 22.0) {
-            if (steps > STEPS_MIN) { steps--; gl.uniform1i(u.uSteps, steps); tuneBudget--; }
-            else if (st.renderScale > SCALE_MIN) {
-              st.renderScale = Math.max(SCALE_MIN, st.renderScale - 0.05);
-              resize(); tuneBudget--;
-            }
-          } else if (frameAvg < 12.5) {
-            if (st.renderScale < 1) {
-              st.renderScale = Math.min(1, st.renderScale + 0.05);
-              resize(); tuneBudget--;
-            } else if (steps < (highRes ? STEPS_MAX : STEPS_START_LOW + 3)) {
-              steps++; gl.uniform1i(u.uSteps, steps); tuneBudget--;
-            }
+          if (frameAvg > 22.0 && st.renderScale > SCALE_MIN) {
+            st.renderScale = Math.max(SCALE_MIN, st.renderScale - 0.06);
+            resize(); tuneBudget--;
+          } else if (frameAvg < 12.5 && st.renderScale < 1) {
+            st.renderScale = Math.min(1, st.renderScale + 0.06);
+            resize(); tuneBudget--;
           }
         }
       }
@@ -819,7 +802,6 @@ void main() {
     setDist(DIST_INITIAL);
     markSelected(BACKGROUNDS[0].id);
     setCredit(BACKGROUNDS[0]);
-    updateFitButton();
     loading.hidden = true;
     idleSince = performance.now();
     draw();

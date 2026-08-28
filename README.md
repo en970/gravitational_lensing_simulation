@@ -168,8 +168,8 @@ Used under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), per the
 original aspect ratio, uncropped, and is served at two resolutions — the long
 edge at 4096 and at 2048, never upscaled past the source. The page loads the
 larger one where the device's `MAX_TEXTURE_SIZE` and screen allow it. Images are fetched only when
-selected, and a **Fill / Fit** toggle chooses between covering the viewport and
-showing the whole frame.
+selected, and are framed to cover the viewport, cropping whatever the long edge
+does not need.
 
 Each image is also built at a third, small size. Selecting a background starts
 both requests at once: the ~250 kB preview lands almost immediately and is shown
@@ -188,11 +188,15 @@ The physics is unchanged. The web version differs in its rendering only:
   own Einstein radius, and the lens can be moved along the line of sight.
   `main.py` has one plane at a fixed distance. At the reference geometry the two
   agree exactly.
-- Depth sample count and render scale adapt to measured frame time, so the
-  simulation holds its frame rate on hardware of very different capability. The
-  volume is divided into a fixed set of shells; sampling fewer of them skips
-  shells rather than moving them, so changing quality never rebuilds the sky
-  underneath the viewer.
+- Render scale adapts to measured frame time, so the simulation holds its frame
+  rate on hardware of very different capability. Depth sample count is *not* a
+  quality dial and is fixed per device: a sample maps to shell
+  floor(i * 26/steps), so lowering the count lands on a different set of shells
+  — 18 samples to 17 drops 8 shells and picks up 7 — and half the sky would be
+  rebuilt in place. Render scale is safe because simW = 600 * w / min(w, h) is
+  invariant when w and h scale together, so objects keep their positions and
+  only sampling density changes. Verified: the same scene at two render scales
+  gives identical mean brightness and lit fraction.
 - The background is sampled bilinearly rather than at the nearest texel, which
   removes the pixel break-up visible under magnification in the Python version.
 - It renders at the display's own resolution, and the shorter side of the
