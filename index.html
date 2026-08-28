@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Gravitational Lensing Simulation</title>
+<meta name="description" content="A real-time gravitational lensing simulation. Light from a background star field is deflected by a movable mass, using Einstein's thin-lens approximation, computed per pixel on the GPU.">
+<meta name="color-scheme" content="dark">
+<link rel="stylesheet" href="src/style.css">
+</head>
+<body>
+
+<section class="stage" id="stage-section">
+  <canvas id="stage"></canvas>
+
+  <div class="overlay">
+    <header class="masthead">
+      <h1>Gravitational Lensing</h1>
+      <a class="source" href="https://github.com/en970/gravitational_lensing_simulation" target="_blank" rel="noopener">Source</a>
+    </header>
+
+    <p class="hint" id="hint">
+      <span class="hint-desktop">Move the cursor to reposition the mass. Scroll or use the arrow keys to change it.</span>
+      <span class="hint-touch">Drag to reposition the mass. Pinch to change it.</span>
+    </p>
+
+    <div class="controls">
+      <label for="mass-slider">Mass</label>
+      <input id="mass-slider" type="range" min="0" max="1" step="0.001" value="0.5"
+             aria-label="Lens mass">
+      <output id="mass-value" for="mass-slider">5.0</output>
+    </div>
+
+    <p class="loading" id="loading">Generating the background field</p>
+    <p class="failure" id="failure" hidden>
+      This simulation needs WebGL2, which this browser does not appear to support.
+      The Python version in the repository runs the same calculation on the CPU.
+    </p>
+  </div>
+
+  <a class="scroll-cue" href="#physics" aria-label="Read how it works">
+    <span>How it works</span>
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+      <path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+  </a>
+</section>
+
+<main class="physics" id="physics">
+  <div class="column">
+
+    <h2>How it works</h2>
+
+    <p>
+      A mass placed between an observer and a distant light source bends the paths of the
+      light rays that pass near it. The source appears displaced, stretched into arcs, and
+      in some cases duplicated. This is gravitational lensing, and it is a prediction of
+      general relativity that has been measured since 1919.
+    </p>
+
+    <h3>The deflection</h3>
+
+    <p>
+      For a light ray passing at a distance <em>r</em> from a point mass <em>M</em>, the
+      deflection angle in the weak-field limit is
+    </p>
+
+    <p class="equation">&theta; = 4<abbr title="gravitational constant">G</abbr><em>M</em> / <abbr title="speed of light">c</abbr><sup>2</sup><em>r</em></p>
+
+    <p>
+      This is Einstein's thin-lens approximation: the whole deflection is treated as
+      happening in a single plane, which is a good description when the lens is much
+      smaller than the distances involved. It is twice the value Newtonian gravity
+      predicts for a corpuscle of light, and the factor of two is what the 1919 eclipse
+      measurement confirmed.
+    </p>
+
+    <h3>What the simulation computes</h3>
+
+    <p>
+      The image is built by working backwards. For each pixel on the screen, at an angular
+      distance &theta; from the centre of the lens, the simulation asks where in the
+      background field that light must have come from. Writing &theta;<sub>E</sub> for the
+      Einstein radius, the source-plane position &beta; is
+    </p>
+
+    <p class="equation">&beta; = &theta; &minus; &theta;<sub>E</sub><sup>2</sup> / &theta;</p>
+
+    <p>
+      The pixel then takes the brightness of the background at &beta;. Because a range of
+      source positions is compressed into a smaller range of image positions, the
+      background is also magnified, by
+    </p>
+
+    <p class="equation">&mu; = | &theta; / &beta; |</p>
+
+    <p>
+      Where &beta; passes through zero, &mu; diverges and the source is smeared into a
+      complete ring — the Einstein ring. In the simulation the magnification is clamped to
+      a factor of four, so the ring stays within the display range rather than saturating.
+    </p>
+
+    <h3>The dark centre</h3>
+
+    <p>
+      Two regions near the centre are handled separately. Inside the Schwarzschild radius
+      <em>r</em><sub>s</sub> no light escapes, so those pixels are black. Between
+      <em>r</em><sub>s</sub> and 1.5&thinsp;<em>r</em><sub>s</sub> lies the photon sphere,
+      where light can orbit; it is darkened rather than removed. The thin white circle
+      marks <em>r</em><sub>s</sub> at the current mass.
+    </p>
+
+    <h3>Where the approximation ends</h3>
+
+    <p>
+      The thin-lens formula is a weak-field result, and this simulation applies it right up
+      to the horizon, where it no longer holds. Close to <em>r</em><sub>s</sub> a correct
+      treatment requires integrating null geodesics in the Schwarzschild metric, which
+      produces higher-order images and an Einstein ring structure the thin lens cannot
+      reproduce. What is shown here is the weak-field picture, drawn everywhere.
+    </p>
+
+    <h3>Implementation</h3>
+
+    <p>
+      The calculation is per-pixel and order-independent, so it runs as a WebGL2 fragment
+      shader: one pass, no geometry, at display resolution. The background field — stars,
+      spiral galaxies, clusters and nebulae — is generated once from a fixed seed and
+      uploaded as a single-channel texture, then sampled bilinearly through the deflection.
+    </p>
+
+    <p>
+      The <a href="https://github.com/en970/gravitational_lensing_simulation/blob/main/main.py">original Python version</a>
+      performs the same computation with NumPy and pygame on the CPU. The equations,
+      constants and background layout are unchanged between the two.
+    </p>
+
+    <h3>Controls</h3>
+
+    <table class="controls-table">
+      <thead>
+        <tr><th scope="col">Action</th><th scope="col">Desktop</th><th scope="col">Touch</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Move the mass</td><td>Move the cursor</td><td>Drag</td></tr>
+        <tr><td>Change the mass</td><td>Scroll, or the up and down arrow keys</td><td>Pinch</td></tr>
+        <tr><td>Change the mass</td><td colspan="2">The slider, on either</td></tr>
+      </tbody>
+    </table>
+
+    <footer class="colophon">
+      <a href="https://github.com/en970/gravitational_lensing_simulation">en970/gravitational_lensing_simulation</a>
+    </footer>
+
+  </div>
+</main>
+
+<script src="src/background.js"></script>
+<script src="src/lensing.js"></script>
+</body>
+</html>

@@ -1,0 +1,316 @@
+:root {
+  --bg: #000;
+  --paper: #0a0a0b;
+  --ink: #d7d7d9;
+  --ink-dim: #8a8a8f;
+  --ink-faint: #56565c;
+  --rule: #1e1e21;
+  --accent: #fff;
+  --serif: ui-serif, Georgia, "Times New Roman", serif;
+  --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+/* ---------------------------------------------------------------- stage -- */
+
+.stage {
+  position: relative;
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  background: #000;
+}
+
+#stage {
+  display: block;
+  width: 100%;
+  height: 100%;
+  /* The lens tracks the finger, so the canvas must not also scroll the page. */
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  padding: max(1.25rem, env(safe-area-inset-top)) max(1.25rem, env(safe-area-inset-right))
+           max(1.25rem, env(safe-area-inset-bottom)) max(1.25rem, env(safe-area-inset-left));
+  display: flex;
+  flex-direction: column;
+}
+
+.masthead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.masthead h1 {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: clamp(0.95rem, 2.4vw, 1.2rem);
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+  text-shadow: 0 1px 12px rgba(0, 0, 0, 0.9);
+}
+
+.source {
+  pointer-events: auto;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  text-shadow: 0 1px 12px rgba(0, 0, 0, 0.9);
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.source:hover { color: var(--accent); border-bottom-color: var(--ink-faint); }
+
+.hint {
+  margin: auto auto 0;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  line-height: 1.6;
+  color: var(--ink-dim);
+  text-align: center;
+  max-width: 30ch;
+  text-shadow: 0 1px 12px rgba(0, 0, 0, 0.95);
+  transition: opacity 0.6s ease;
+}
+
+.hint.is-hidden { opacity: 0; }
+
+.hint-touch { display: none; }
+
+@media (hover: none) and (pointer: coarse) {
+  .hint-desktop { display: none; }
+  .hint-touch { display: inline; }
+}
+
+.controls {
+  pointer-events: auto;
+  margin: 1.1rem auto 0;
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.5rem 0.9rem;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  color: var(--ink-dim);
+}
+
+.controls label { text-transform: uppercase; }
+
+.controls output {
+  min-width: 2.6ch;
+  text-align: right;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+#mass-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: clamp(7rem, 34vw, 12rem);
+  height: 20px;
+  background: transparent;
+  cursor: ew-resize;
+}
+
+#mass-slider::-webkit-slider-runnable-track {
+  height: 1px;
+  background: var(--ink-faint);
+}
+
+#mass-slider::-moz-range-track {
+  height: 1px;
+  background: var(--ink-faint);
+}
+
+#mass-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 13px;
+  height: 13px;
+  margin-top: -6px;
+  border-radius: 50%;
+  background: var(--ink);
+  border: none;
+}
+
+#mass-slider::-moz-range-thumb {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--ink);
+  border: none;
+}
+
+#mass-slider:focus-visible { outline: 1px solid var(--ink-dim); outline-offset: 6px; }
+
+.loading,
+.failure {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  margin: 0;
+  max-width: 34ch;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  line-height: 1.7;
+  color: var(--ink-dim);
+}
+
+.loading[hidden],
+.failure[hidden] { display: none; }
+
+.scroll-cue {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: max(1rem, env(safe-area-inset-bottom));
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.6rem;
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  text-decoration: none;
+  text-shadow: 0 1px 12px rgba(0, 0, 0, 0.95);
+  transition: color 0.15s;
+}
+
+.scroll-cue:hover { color: var(--ink); }
+
+/* -------------------------------------------------------------- physics -- */
+
+.physics {
+  background: var(--paper);
+  border-top: 1px solid var(--rule);
+  padding: clamp(3rem, 9vw, 6rem) 1.25rem clamp(4rem, 10vw, 7rem);
+}
+
+.column {
+  max-width: 34rem;
+  margin: 0 auto;
+}
+
+.physics h2 {
+  margin: 0 0 2rem;
+  font-family: var(--serif);
+  font-weight: 400;
+  font-size: clamp(1.5rem, 4.5vw, 2rem);
+  letter-spacing: -0.01em;
+}
+
+.physics h3 {
+  margin: 2.75rem 0 0.9rem;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+
+.physics p {
+  margin: 0 0 1.1rem;
+  font-family: var(--serif);
+  font-size: clamp(1rem, 2.6vw, 1.05rem);
+  line-height: 1.72;
+  color: var(--ink);
+}
+
+.physics em { font-style: italic; }
+
+.physics abbr { text-decoration: none; border-bottom: 1px dotted var(--ink-faint); }
+
+.equation {
+  font-family: var(--mono) !important;
+  font-size: 0.95rem !important;
+  text-align: center;
+  padding: 1.15rem 0.5rem;
+  margin: 1.5rem 0 !important;
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+  color: var(--accent) !important;
+  overflow-x: auto;
+}
+
+.physics a { color: var(--ink); text-decoration: none; border-bottom: 1px solid var(--ink-faint); }
+.physics a:hover { border-bottom-color: var(--accent); }
+
+.controls-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  margin-top: 0.5rem;
+}
+
+.controls-table th,
+.controls-table td {
+  text-align: left;
+  padding: 0.65rem 0.75rem 0.65rem 0;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+}
+
+.controls-table th {
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  font-size: 0.68rem;
+}
+
+.controls-table td { color: var(--ink); }
+.controls-table td:first-child { color: var(--ink-dim); }
+
+.colophon {
+  margin-top: 3.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--rule);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+}
+
+.colophon a { color: var(--ink-faint); border-bottom: none; }
+.colophon a:hover { color: var(--ink); }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .hint { transition: none; }
+}
