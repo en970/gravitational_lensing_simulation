@@ -298,6 +298,10 @@ void main() {
     }, { passive: false });
 
     window.addEventListener('keydown', function (e) {
+      /* The slider handles its own arrow keys, and below the fold the arrows
+         belong to the page, for scrolling the text. */
+      if (e.target === slider) return;
+      if (window.scrollY > canvas.clientHeight * 0.5) return;
       if (e.key === 'ArrowUp') { keys.up = true; noteInteraction(); e.preventDefault(); }
       if (e.key === 'ArrowDown') { keys.down = true; noteInteraction(); e.preventDefault(); }
     });
