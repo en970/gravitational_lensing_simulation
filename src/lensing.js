@@ -81,12 +81,14 @@
      change with refresh rate. */
   var FOLLOW = 0.22;
 
-  /* Left alone, the lens drifts. It wraps around the field rather than
-     bouncing, and it wraps far enough outside the viewport that its own
-     lensing has left the screen before the position jumps. */
+  /* Left alone, the lens drifts along a closed curve. An earlier version
+     wrapped around the edges, but the deflection never actually reaches zero:
+     even with the lens far outside the viewport, θ_E²/θ still shifts the whole
+     sky by a visible amount, so the wrap read as the page reloading. A bounded
+     path has no such discontinuity. The two frequencies are incommensurable,
+     so it never repeats. */
   var IDLE_MS    = 3500;
-  var DRIFT_SPEED = 34.0;   /* simulation units per second */
-  var DRIFT_EASE  = 1.6;    /* seconds to reach full speed */
+  var DRIFT_EASE = 2.2;     /* seconds to blend fully into the path */
 
   var BACKGROUNDS = [
     { id: 'procedural', label: 'Procedural', kind: 'volume' },
@@ -320,14 +322,7 @@ void main() {
     }
   }
 
-  color = clamp(color, 0.0, 1.0);
-
-  // The 1 px circle main.py draws at r_s, anti-aliased, at the angular size
-  // the horizon has from the current lens distance.
-  float ring = 1.0 - smoothstep(0.0, aa, abs(theta - uThetaS));
-  color = mix(color, vec3(1.0), ring * 0.8);
-
-  fragColor = vec4(color, 1.0);
+  fragColor = vec4(clamp(color, 0.0, 1.0), 1.0);
 }`;
 
   function compile(gl, type, source) {
@@ -381,6 +376,7 @@ void main() {
     var distOut  = document.getElementById('dist-value');
     var picker   = document.getElementById('picker');
     var fitBtn   = document.getElementById('fit-toggle');
+    var ambBtn   = document.getElementById('ambient-toggle');
     var creditEl = document.getElementById('credit');
     var hint     = document.getElementById('hint');
     var loading  = document.getElementById('loading');
@@ -448,7 +444,8 @@ void main() {
       mode: 0,
       photoAspect: 1,
       fit: false,
-      renderScale: 1.0
+      renderScale: 1.0,
+      ambient: false
     };
 
     var keys = { up: false, down: false };
@@ -456,11 +453,14 @@ void main() {
     var loadToken = 0;
     var lastTime = 0;
     var frameAvg = 16.7;
-    var tuneIn = 20;
-    var warmup = 70;   // shader compile and first uploads are not typical frames
+    var tuneIn = 60;
+    var warmup = 140;    // shader compile and first uploads are not typical frames
+    var tuneBudget = 12; // settle, then stop adjusting; churn is worse than a
+                         // slightly wrong setting
     var idleSince = 0;
-    var drift = 0;     // 0 at rest, eases to 1
-    var driftPhase = Math.random() * 100;
+    var exitHintUntil = 0;
+    var drift = 0;     // 0 under manual control, eases to 1 on the path
+    var driftPhase = Math.random() * 400;
 
     function resize() {
       var dpr = Math.min(window.devicePixelRatio || 1, 2) * st.renderScale;
@@ -496,6 +496,7 @@ void main() {
     }
 
     function moveLens(cx, cy) {
+      if (st.ambient) return;   // the path owns the lens in ambient mode
       var p = toSim(cx, cy);
       if (!p) return;
       st.lensXTarget = p.x;
@@ -516,7 +517,23 @@ void main() {
       distOut.textContent = st.distTarget.toFixed(2);
     }
 
+    function setAmbient(on) {
+      st.ambient = on;
+      document.body.classList.toggle('is-ambient', on);
+      ambBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+      if (on) {
+        /* Pick up the path from where the lens already is, so entering the
+           mode does not throw it across the screen. */
+        drift = 0;
+        exitHintUntil = performance.now() + 2600;
+      } else {
+        drift = 0;
+        idleSince = performance.now();
+      }
+    }
+
     function noteInteraction() {
+      if (st.ambient) return;   // pointer motion must not cancel the path
       idleSince = performance.now();
       drift = 0;
       if (interacted) return;
@@ -524,24 +541,16 @@ void main() {
       hint.classList.add('is-hidden');
     }
 
-    /* How far outside the viewport the lens must be before its influence is
-       off screen: the widest Einstein radius plus the horizon, bounded so it
-       never disappears for an uncomfortably long time. */
-    function driftMargin() {
-      var reach = 1.4 * 20.0 * st.mass + 1.5 * st.mass / st.dist;
-      return Math.min(reach, Math.max(st.simW, st.simH) * 0.7) + 40;
-    }
-
-    /* Wrap live and target position together, so the smoothing does not
-       interpolate across the jump. */
-    function wrapLens() {
-      var m = driftMargin();
-      var spanX = st.simW + 2 * m;
-      var spanY = st.simH + 2 * m;
-      if (st.lensXTarget < -m)          { st.lensXTarget += spanX; st.lensX += spanX; }
-      else if (st.lensXTarget > st.simW + m) { st.lensXTarget -= spanX; st.lensX -= spanX; }
-      if (st.lensYTarget < -m)          { st.lensYTarget += spanY; st.lensY += spanY; }
-      else if (st.lensYTarget > st.simH + m) { st.lensYTarget -= spanY; st.lensY -= spanY; }
+    /* Where the drift wants the lens to be at time t. Sines of two
+       incommensurable frequencies, each slowly modulated, so the path stays
+       inside the frame, never repeats, and never runs straight. */
+    function driftPoint(t) {
+      var ax = st.simW * 0.40;
+      var ay = st.simH * 0.40;
+      return {
+        x: st.simW * 0.5 + ax * Math.sin(t * 0.1130 + 0.7) * (0.72 + 0.28 * Math.sin(t * 0.0331)),
+        y: st.simH * 0.5 + ay * Math.sin(t * 0.0817 + 2.1) * (0.72 + 0.28 * Math.sin(t * 0.0264))
+      };
     }
 
     function showNotice(t) { notice.textContent = t || ''; notice.hidden = !t; }
@@ -652,12 +661,15 @@ void main() {
       noteInteraction();
     });
 
+    ambBtn.addEventListener('click', function () { setAmbient(!st.ambient); });
+
     /* ---- input --------------------------------------------------------- */
 
     var pointers = new Map();
     var pinchStart = null;
 
     canvas.addEventListener('pointerdown', function (e) {
+      if (st.ambient) { setAmbient(false); return; }
       pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
       if (pointers.size === 2) {
@@ -700,6 +712,7 @@ void main() {
     }, { passive: false });
 
     window.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && st.ambient) { setAmbient(false); return; }
       if (e.target === massIn || e.target === distIn) return;
       if (window.scrollY > canvas.clientHeight * 0.5) return;
       if (e.key === 'ArrowUp')   { keys.up = true;   noteInteraction(); e.preventDefault(); }
@@ -748,20 +761,20 @@ void main() {
 
       if (st.mode === 0 && warmup === 0) {
         frameAvg += (Math.min(raw, 100) - frameAvg) * 0.1;
-        if (--tuneIn <= 0) {
-          tuneIn = 20;
-          if (frameAvg > 21.0) {
-            if (steps > STEPS_MIN) { steps--; gl.uniform1i(u.uSteps, steps); }
+        if (tuneBudget > 0 && --tuneIn <= 0) {
+          tuneIn = 60;
+          if (frameAvg > 22.0) {
+            if (steps > STEPS_MIN) { steps--; gl.uniform1i(u.uSteps, steps); tuneBudget--; }
             else if (st.renderScale > SCALE_MIN) {
-              st.renderScale = Math.max(SCALE_MIN, st.renderScale - 0.08);
-              resize();
+              st.renderScale = Math.max(SCALE_MIN, st.renderScale - 0.05);
+              resize(); tuneBudget--;
             }
-          } else if (frameAvg < 13.5) {
+          } else if (frameAvg < 12.5) {
             if (st.renderScale < 1) {
-              st.renderScale = Math.min(1, st.renderScale + 0.04);
-              resize();
+              st.renderScale = Math.min(1, st.renderScale + 0.05);
+              resize(); tuneBudget--;
             } else if (steps < (highRes ? STEPS_MAX : STEPS_START_LOW + 3)) {
-              steps++; gl.uniform1i(u.uSteps, steps);
+              steps++; gl.uniform1i(u.uSteps, steps); tuneBudget--;
             }
           }
         }
@@ -770,18 +783,18 @@ void main() {
       if (keys.up)   setMass(st.massTarget * Math.pow(1.02, dt));
       if (keys.down) setMass(st.massTarget / Math.pow(1.02, dt));
 
-      /* Drift when the viewer has been still for a while. */
+      /* Drift in ambient mode, or once the viewer has been still a while.
+         The path is blended in rather than switched to, so control is handed
+         over without a jump. */
       var secs = Math.min(raw, 100) / 1000;
-      if (idleSince && now - idleSince > IDLE_MS) {
+      driftPhase += secs;
+      var wantDrift = st.ambient || (idleSince && now - idleSince > IDLE_MS);
+      if (wantDrift) {
         drift = Math.min(1, drift + secs / DRIFT_EASE);
-        driftPhase += secs;
-        /* A slowly turning heading: never repeats, never a straight line. */
-        var a = driftPhase * 0.16 + Math.sin(driftPhase * 0.083) * 1.7;
-        var step = DRIFT_SPEED * drift * secs;
-        st.lensXTarget += Math.cos(a) * step;
-        st.lensYTarget += Math.sin(a) * step;
+        var p = driftPoint(driftPhase);
+        st.lensXTarget += (p.x - st.lensXTarget) * drift * Math.min(1, secs * 3.0);
+        st.lensYTarget += (p.y - st.lensYTarget) * drift * Math.min(1, secs * 3.0);
         st.lensPlaced = true;
-        wrapLens();
       }
 
       /* Frame-rate independent approach to the target. */
@@ -790,6 +803,12 @@ void main() {
       st.lensY += (st.lensYTarget - st.lensY) * k;
       st.mass  += (st.massTarget  - st.mass)  * k;
       st.dist  += (st.distTarget  - st.dist)  * k;
+
+      if (exitHintUntil) {
+        var show = st.ambient && now < exitHintUntil;
+        document.body.classList.toggle('show-exit-hint', show);
+        if (!show && !st.ambient) exitHintUntil = 0;
+      }
 
       draw();
       requestAnimationFrame(frame);

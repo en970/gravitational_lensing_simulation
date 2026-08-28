@@ -39,10 +39,19 @@ Then visit `http://localhost:8000/`.
 
 ### Controls
 
-Left alone for three and a half seconds, the lens drifts on its own, wrapping
-around the field rather than bouncing off the edges — it wraps far enough
-outside the viewport that its own lensing has left the screen before the
-position jumps. Any input takes control back.
+Left alone for three and a half seconds, the lens drifts on its own along a
+closed path — two sines of incommensurable frequency, each slowly modulated, so
+it stays in frame and never repeats. It is blended in rather than switched to,
+so control is handed over without a jump, and any input takes it straight back.
+
+An earlier version wrapped the lens around the edges of the field instead. That
+looked like the page reloading, and the reason is worth recording: the
+deflection never actually reaches zero. Even with the lens far outside the
+viewport, θ_E²/θ still shifts the whole sky by a visible amount, so every wrap
+moved the stars. A bounded path has no such discontinuity.
+
+**Ambient** hands the lens to that path permanently, hides the interface and the
+cursor, and ignores the pointer — a screensaver. A tap, a click or Escape exits.
 
 | Action | Desktop | Touch |
 |---|---|---|
@@ -116,7 +125,7 @@ That depth contributes its brightness at β, magnified by µ = | θ / β | and c
 to a factor of four, and the depths are added, because light adds. Where β passes
 through zero the source is smeared into a complete Einstein ring. Inside the
 Schwarzschild radius the pixels are black; between r_s and 1.5 r_s, the photon
-sphere, they are darkened. A thin white circle marks r_s.
+sphere, they are darkened.
 
 ### Where the approximation ends
 
