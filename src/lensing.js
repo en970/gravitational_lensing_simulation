@@ -81,6 +81,13 @@
      change with refresh rate. */
   var FOLLOW = 0.22;
 
+  /* Left alone, the lens drifts. It wraps around the field rather than
+     bouncing, and it wraps far enough outside the viewport that its own
+     lensing has left the screen before the position jumps. */
+  var IDLE_MS    = 3500;
+  var DRIFT_SPEED = 34.0;   /* simulation units per second */
+  var DRIFT_EASE  = 1.6;    /* seconds to reach full speed */
+
   var BACKGROUNDS = [
     { id: 'procedural', label: 'Procedural', kind: 'volume' },
     { id: 'hudf',  label: 'Ultra Deep Field', kind: 'photo', base: 'images/hudf',
@@ -168,29 +175,69 @@ vec3 skySlice(vec2 ang, float dS, float id) {
       float d     = length(delta);
       if (d > 1.4) continue;
 
-      float bright = 0.35 + 0.65 * h2.x;
-      vec3  tint   = tintFor(dS, h2.y);
+      // Most things are faint; a few are bright. A plain uniform draw made
+      // every galaxy equally prominent, which is what read as artificial.
+      float bright = 0.16 + 0.84 * pow(h2.x, 1.6);
       float v;
+      vec3  col;
 
       if (h2.z < starry) {
+        // A star. Colour by temperature rather than painting them all white.
+        float temp  = h.x;
+        vec3  hot   = vec3(0.74, 0.83, 1.00);
+        vec3  sun   = vec3(1.00, 0.96, 0.88);
+        vec3  cool  = vec3(1.00, 0.78, 0.60);
+        col = mix(mix(hot, sun, smoothstep(0.0, 0.55, temp)),
+                  cool, smoothstep(0.55, 1.0, temp));
         float core  = exp(-d * d * 4200.0);
         float spike = exp(-(abs(delta.x) * 260.0 + abs(delta.y) * 22.0))
                     + exp(-(abs(delta.y) * 260.0 + abs(delta.x) * 22.0));
         v = (core + 0.06 * spike) * 2.3;
       } else {
-        float scale = 0.045 + 0.075 * h2.x;
-        float r     = d / scale;
-        vec2  n     = delta / max(d, 1e-5);
-        float rot   = r * 2.3 + h2.y * 6.2831;
-        float cr    = cos(rot), sr = sin(rot);
-        vec2  m     = vec2(n.x * cr - n.y * sr, n.x * sr + n.y * cr);
-        float arms  = 0.30 + 0.70 * (m.x * m.x - m.y * m.y) * 0.5 + 0.35;
-        float core  = exp(-r * r * 2.6);
-        float disc  = exp(-r * 1.6);
-        v = max(core, disc * arms) * 1.45;
+        float scale = 0.040 + 0.070 * h2.x;
+
+        // Inclination: squash along a random axis, so most galaxies present as
+        // ellipses rather than face-on discs. Built from the hash directly, so
+        // it costs no trigonometry.
+        vec2  ax   = normalize(h.xy * 2.0 - 1.0 + 1e-4);
+        vec2  e    = vec2(dot(delta, ax), dot(delta, vec2(-ax.y, ax.x)));
+        float incl = 0.22 + 0.78 * h2.y;          // axis ratio
+        e.y /= incl;
+        float r = length(e) / scale;
+
+        vec3 coreC = vec3(1.00, 0.87, 0.68);      // old stars, yellow-red
+        vec3 outerC;
+
+        float core = exp(-r * r * 2.6);
+        float disc = exp(-r * 1.6);
+        float typ  = fract(h2.z * 3.137);
+
+        if (typ < 0.42) {
+          // Elliptical: smooth, no arms, red throughout.
+          outerC = vec3(1.00, 0.80, 0.63);
+          v = max(core, disc * 0.85);
+        } else if (typ < 0.88) {
+          // Spiral: yellow core, blue arms.
+          outerC = vec3(0.70, 0.83, 1.00);
+          vec2  n2  = e / max(length(e), 1e-5);
+          float rot = r * 2.3 + h2.y * 6.2831;
+          float cr  = cos(rot), sr = sin(rot);
+          vec2  m   = vec2(n2.x * cr - n2.y * sr, n2.x * sr + n2.y * cr);
+          float arms = 0.30 + 0.70 * (m.x * m.x - m.y * m.y) * 0.5 + 0.35;
+          v = max(core, disc * arms);
+        } else {
+          // Irregular: clumpy and blue, the way small starbursts look.
+          outerC = vec3(0.66, 0.86, 1.00);
+          float cl = 0.5 + 0.5 * sin(e.x * 34.0 / scale) * sin(e.y * 29.0 / scale);
+          v = disc * (0.35 + 0.65 * cl);
+        }
+
+        col = mix(coreC, outerC, smoothstep(0.10, 1.30, r));
+        v *= 1.35;
       }
 
-      acc += tint * v * bright;
+      // Reddening with distance rides on top of the object's own colour.
+      acc += col * tintFor(dS, h2.y) * v * bright;
     }
   }
 
@@ -252,7 +299,7 @@ void main() {
       color += v;
     }
 
-    color /= steps * 0.045;
+    color /= steps * 0.034;
   } else {
     float tE2  = einsteinSq(uPhotoDist);
     float beta = theta - tE2 / theta;
@@ -411,6 +458,9 @@ void main() {
     var frameAvg = 16.7;
     var tuneIn = 20;
     var warmup = 70;   // shader compile and first uploads are not typical frames
+    var idleSince = 0;
+    var drift = 0;     // 0 at rest, eases to 1
+    var driftPhase = Math.random() * 100;
 
     function resize() {
       var dpr = Math.min(window.devicePixelRatio || 1, 2) * st.renderScale;
@@ -467,9 +517,31 @@ void main() {
     }
 
     function noteInteraction() {
+      idleSince = performance.now();
+      drift = 0;
       if (interacted) return;
       interacted = true;
       hint.classList.add('is-hidden');
+    }
+
+    /* How far outside the viewport the lens must be before its influence is
+       off screen: the widest Einstein radius plus the horizon, bounded so it
+       never disappears for an uncomfortably long time. */
+    function driftMargin() {
+      var reach = 1.4 * 20.0 * st.mass + 1.5 * st.mass / st.dist;
+      return Math.min(reach, Math.max(st.simW, st.simH) * 0.7) + 40;
+    }
+
+    /* Wrap live and target position together, so the smoothing does not
+       interpolate across the jump. */
+    function wrapLens() {
+      var m = driftMargin();
+      var spanX = st.simW + 2 * m;
+      var spanY = st.simH + 2 * m;
+      if (st.lensXTarget < -m)          { st.lensXTarget += spanX; st.lensX += spanX; }
+      else if (st.lensXTarget > st.simW + m) { st.lensXTarget -= spanX; st.lensX -= spanX; }
+      if (st.lensYTarget < -m)          { st.lensYTarget += spanY; st.lensY += spanY; }
+      else if (st.lensYTarget > st.simH + m) { st.lensYTarget -= spanY; st.lensY -= spanY; }
     }
 
     function showNotice(t) { notice.textContent = t || ''; notice.hidden = !t; }
@@ -698,6 +770,20 @@ void main() {
       if (keys.up)   setMass(st.massTarget * Math.pow(1.02, dt));
       if (keys.down) setMass(st.massTarget / Math.pow(1.02, dt));
 
+      /* Drift when the viewer has been still for a while. */
+      var secs = Math.min(raw, 100) / 1000;
+      if (idleSince && now - idleSince > IDLE_MS) {
+        drift = Math.min(1, drift + secs / DRIFT_EASE);
+        driftPhase += secs;
+        /* A slowly turning heading: never repeats, never a straight line. */
+        var a = driftPhase * 0.16 + Math.sin(driftPhase * 0.083) * 1.7;
+        var step = DRIFT_SPEED * drift * secs;
+        st.lensXTarget += Math.cos(a) * step;
+        st.lensYTarget += Math.sin(a) * step;
+        st.lensPlaced = true;
+        wrapLens();
+      }
+
       /* Frame-rate independent approach to the target. */
       var k = 1 - Math.pow(1 - FOLLOW, dt);
       st.lensX += (st.lensXTarget - st.lensX) * k;
@@ -716,6 +802,7 @@ void main() {
     setCredit(BACKGROUNDS[0]);
     updateFitButton();
     loading.hidden = true;
+    idleSince = performance.now();
     draw();
     requestAnimationFrame(frame);
   }

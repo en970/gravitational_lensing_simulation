@@ -39,6 +39,11 @@ Then visit `http://localhost:8000/`.
 
 ### Controls
 
+Left alone for three and a half seconds, the lens drifts on its own, wrapping
+around the field rather than bouncing off the edges — it wraps far enough
+outside the viewport that its own lensing has left the screen before the
+position jumps. Any input takes control back.
+
 | Action | Desktop | Touch |
 |---|---|---|
 | Move the mass across the sky | Move the cursor | Drag |
@@ -130,8 +135,15 @@ multi-plane lensing does.
 The procedural sky is generated from a hash inside the shader rather than from a
 texture. It is therefore unbounded — there is no edge for the deflection to run
 off, which is what smeared the image at high mass — it costs nothing to load,
-and it stays sharp at any magnification. Nearby stars run blue-white and distant
-galaxies redden, which is both the real trend and a depth cue.
+and it stays sharp at any magnification.
+
+Objects are drawn with the variety a deep field actually shows. Galaxies are
+inclined by a random axis ratio, so most present as ellipses rather than
+face-on discs, and fall into three kinds: ellipticals, smooth and red; spirals,
+with a yellow core and blue arms; and irregulars, clumpy and blue. Brightness is
+skewed so that most are faint and a few stand out. Stars are coloured by
+temperature, and everything reddens with distance — the real trend, and a depth
+cue on top of the lensing.
 
 The three photographic backgrounds are real Hubble images, and are single planes
 at *D_S* = 1.5, since a photograph records no depth.
