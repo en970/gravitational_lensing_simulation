@@ -1,10 +1,11 @@
 # Gravitational Lensing Simulation
 
+### [Run the simulation &rarr;](https://en970.github.io/gravitational_lensing_simulation/)
+
 A real-time visualization of gravitational lensing based on Einstein's General
 Relativity. Light from a background star field is deflected by a movable mass,
-using the thin-lens approximation, computed for every pixel on screen.
-
-**Run it in the browser:** https://en970.github.io/gravitational_lensing_simulation/
+using the thin-lens approximation, computed for every pixel on screen. It runs
+in the browser on desktop and mobile, with no installation.
 
 The repository holds two implementations of the same calculation. The equations,
 constants and background layout are identical between them.
@@ -18,7 +19,8 @@ constants and background layout are identical between them.
 
 ## Web version
 
-Open the link above, or serve the directory locally:
+Open <https://en970.github.io/gravitational_lensing_simulation/>, or serve the
+directory locally:
 
 ```
 python3 -m http.server
