@@ -1,13 +1,26 @@
 /*
- * Background field generation.
+ * Background field generation, in depth.
  *
- * A port of create_background_texture() in main.py. The galaxy, star-cluster
- * and nebula layout is identical; positions are expressed relative to the
- * texture centre rather than to a fixed 1600x1400 buffer, so that the same
- * field covers any viewport aspect ratio without moving the central galaxy
- * away from the centre of the screen.
+ * The field is built as four planes at different source distances D_S, rather
+ * than the single plane of main.py. Each plane is lensed independently, with
+ * its own Einstein radius, which is what gives the scene its depth: a plane
+ * further away is deflected more strongly, and a plane in front of the lens is
+ * not deflected at all.
  *
- * The texture is generated once, at load, and is independent of viewport size.
+ * Distances are in units of the reference source distance, D_S = 1. They are a
+ * plausible ordering, not a measurement:
+ *
+ *   0.20  foreground   stars, nebulae and star clusters of our own galaxy
+ *   0.80  near         large spiral galaxies, resolved structure
+ *   1.50  mid          the central galaxy and its neighbours
+ *   3.20  far          a deep field of small, faint galaxies
+ *
+ * Objects are scaled and dimmed with distance, so the planes read as depth even
+ * before any lensing is applied.
+ *
+ * The galaxy, cluster and nebula shapes are those of main.py. Their positions
+ * are expressed relative to the field centre rather than to a fixed 1600x1400
+ * buffer, so the same field covers any viewport aspect ratio.
  */
 
 (function (global) {
@@ -18,7 +31,12 @@
   var CX = TEX_W / 2;
   var CY = TEX_H / 2;
 
-  /* Deterministic PRNG, so the field is the same on every device and reload.
+  /* Source distance of each plane, in units of the reference distance D_S = 1.
+     Ascending; the shader relies on nothing but the values themselves. */
+  var LAYER_DISTANCE = [0.20, 0.80, 1.50, 3.20];
+  var LAYER_COUNT = LAYER_DISTANCE.length;
+
+  /* Deterministic PRNG, so the field is identical on every device and reload.
      Plays the role of np.random.seed(42) in the Python version. */
   function mulberry32(seed) {
     var a = seed >>> 0;
@@ -116,7 +134,7 @@
     }
   }
 
-  function addGalaxyCluster(buf, cx, cy, radius) {
+  function addGalaxyCluster(buf, cx, cy, radius, scale, dim) {
     var num = randInt(8, 15);
     for (var i = 0; i < num; i++) {
       var angle = rand() * 2 * Math.PI;
@@ -125,60 +143,28 @@
         buf,
         cx + r * Math.cos(angle),
         cy + r * Math.sin(angle),
-        randInt(8, 20),
-        randInt(60, 120)
+        Math.max(3, randInt(8, 20) * scale),
+        randInt(60, 120) * dim
       );
     }
   }
 
-  /* Layout, as offsets from the texture centre. Taken directly from main.py,
-     where the same objects are placed relative to a centre at (800, 700). */
-  var GALAXIES = [
-    [0, 0, 110, 255],        /* the main galaxy, always at screen centre */
-    [-320, -220, 45, 200],
-    [320, -220, 40, 180],
-    [-320, 220, 50, 190],
-    [320, 220, 45, 185],
-    [0, -180, 35, 170],
-    [-200, 0, 30, 160],
-    [200, 50, 35, 175],
-    [-680, 0, 65, 220],
-    [680, 0, 60, 215],
-    [0, -580, 55, 210],
-    [0, 580, 60, 215]
-  ];
+  /* Scatter n galaxies over the whole field, avoiding the very centre so that
+     the central galaxy of the mid plane stays readable. */
+  function scatterGalaxies(buf, n, rMin, rMax, bMin, bMax) {
+    for (var i = 0; i < n; i++) {
+      var x = rand() * TEX_W;
+      var y = rand() * TEX_H;
+      if (Math.abs(x - CX) < 140 && Math.abs(y - CY) < 140) continue;
+      addGalaxy(buf, x, y, rMin + rand() * (rMax - rMin), bMin + rand() * (bMax - bMin));
+    }
+  }
 
-  var CLUSTERS = [
-    [-250, -100, 40, 50],
-    [250, 100, 35, 45],
-    [-100, 150, 45, 55]
-  ];
-
-  var NEBULAE = [
-    [100, -100, 70],
-    [-300, 100, 60],
-    [-600, -400, 90],
-    [600, 400, 80]
-  ];
-
-  var GALAXY_CLUSTERS = [
-    [-50, 250, 80],
-    [250, -150, 70]
-  ];
-
-  /* main.py scatters 2000 stars over 1600x1400. The field here is larger, so
-     that it covers portrait as well as landscape viewports; the count is
-     scaled to hold the surface density constant. */
-  var STAR_COUNT = Math.round(2000 * (TEX_W * TEX_H) / (1600 * 1400));
-
-  function create() {
-    var buf = new Float32Array(TEX_W * TEX_H);
-
-    for (var i = 0; i < STAR_COUNT; i++) {
+  function scatterStars(buf, n, sizes, bMin, bMax) {
+    for (var i = 0; i < n; i++) {
       var x = randInt(0, TEX_W);
       var y = randInt(0, TEX_H);
-      var brightness = randInt(60, 255);
-      var sizes = [1, 1, 1, 1, 2, 2, 3];
+      var brightness = randInt(bMin, bMax);
       var size = sizes[randInt(0, sizes.length)];
       for (var dy = -size; dy <= size; dy++) {
         for (var dx = -size; dx <= size; dx++) {
@@ -192,28 +178,80 @@
         }
       }
     }
+  }
 
-    var k;
-    for (k = 0; k < GALAXIES.length; k++) {
-      addGalaxy(buf, CX + GALAXIES[k][0], CY + GALAXIES[k][1], GALAXIES[k][2], GALAXIES[k][3]);
-    }
-    for (k = 0; k < CLUSTERS.length; k++) {
-      addStarCluster(buf, CX + CLUSTERS[k][0], CY + CLUSTERS[k][1], CLUSTERS[k][2], CLUSTERS[k][3]);
-    }
-    for (k = 0; k < NEBULAE.length; k++) {
-      addNebula(buf, CX + NEBULAE[k][0], CY + NEBULAE[k][1], NEBULAE[k][2]);
-    }
-    for (k = 0; k < GALAXY_CLUSTERS.length; k++) {
-      addGalaxyCluster(buf, CX + GALAXY_CLUSTERS[k][0], CY + GALAXY_CLUSTERS[k][1], GALAXY_CLUSTERS[k][2]);
-    }
+  /* ---- plane contents -------------------------------------------------- */
 
-    var out = new Uint8Array(TEX_W * TEX_H);
-    for (var j = 0; j < buf.length; j++) {
-      var v = buf[j];
-      out[j] = v > 255 ? 255 : (v < 0 ? 0 : v);
+  /* Plane 0, D_S = 0.20: our own galaxy. Stars, clusters and nebulae, all in
+     front of the lens at its default distance, so they stay undeflected. */
+  function buildForeground(buf) {
+    scatterStars(buf, 2600, [1, 1, 1, 1, 2, 2, 3], 60, 255);
+    addStarCluster(buf, CX - 250, CY - 100, 40, 50);
+    addStarCluster(buf, CX + 250, CY + 100, 35, 45);
+    addStarCluster(buf, CX - 100, CY + 150, 45, 55);
+    addNebula(buf, CX + 100, CY - 100, 70);
+    addNebula(buf, CX - 300, CY + 100, 60);
+    addNebula(buf, CX - 600, CY - 400, 90);
+    addNebula(buf, CX + 600, CY + 400, 80);
+  }
+
+  /* Plane 1, D_S = 0.80: large nearby galaxies, off to the sides. */
+  function buildNear(buf) {
+    addGalaxy(buf, CX - 680, CY, 65, 220);
+    addGalaxy(buf, CX + 680, CY, 60, 215);
+    addGalaxy(buf, CX, CY - 580, 55, 210);
+    addGalaxy(buf, CX, CY + 580, 60, 215);
+    scatterGalaxies(buf, 10, 20, 38, 90, 150);
+  }
+
+  /* Plane 2, D_S = 1.50: the central galaxy and its neighbours. This is the
+     plane that forms the most visible Einstein ring at the default settings. */
+  function buildMid(buf) {
+    addGalaxy(buf, CX, CY, 110, 255);
+    addGalaxy(buf, CX - 320, CY - 220, 45, 200);
+    addGalaxy(buf, CX + 320, CY - 220, 40, 180);
+    addGalaxy(buf, CX - 320, CY + 220, 50, 190);
+    addGalaxy(buf, CX + 320, CY + 220, 45, 185);
+    scatterGalaxies(buf, 26, 12, 26, 70, 130);
+  }
+
+  /* Plane 3, D_S = 3.20: a deep field. Many small, faint galaxies, the way a
+     long exposure of an empty patch of sky actually looks. */
+  function buildFar(buf) {
+    addGalaxy(buf, CX, CY - 180, 26, 150);
+    addGalaxy(buf, CX - 200, CY, 22, 140);
+    addGalaxy(buf, CX + 200, CY + 50, 26, 155);
+    addGalaxyCluster(buf, CX - 50, CY + 250, 80, 0.55, 0.8);
+    addGalaxyCluster(buf, CX + 250, CY - 150, 70, 0.55, 0.8);
+    scatterGalaxies(buf, 150, 5, 15, 45, 110);
+  }
+
+  var BUILDERS = [buildForeground, buildNear, buildMid, buildFar];
+
+  /* Returns one Uint8Array holding the planes back to back, laid out for
+     texImage3D: plane 0 first, then plane 1, and so on. */
+  function create() {
+    var planeSize = TEX_W * TEX_H;
+    var out = new Uint8Array(planeSize * LAYER_COUNT);
+    var work = new Float32Array(planeSize);
+
+    for (var layer = 0; layer < LAYER_COUNT; layer++) {
+      work.fill(0);
+      BUILDERS[layer](work);
+      var base = layer * planeSize;
+      for (var i = 0; i < planeSize; i++) {
+        var v = work[i];
+        out[base + i] = v > 255 ? 255 : (v < 0 ? 0 : v);
+      }
     }
     return out;
   }
 
-  global.LensingBackground = { WIDTH: TEX_W, HEIGHT: TEX_H, create: create };
+  global.LensingBackground = {
+    WIDTH: TEX_W,
+    HEIGHT: TEX_H,
+    LAYER_COUNT: LAYER_COUNT,
+    LAYER_DISTANCE: LAYER_DISTANCE,
+    create: create
+  };
 })(window);

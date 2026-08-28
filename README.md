@@ -3,9 +3,15 @@
 ### [Run the simulation &rarr;](https://en970.github.io/gravitational_lensing_simulation/)
 
 A real-time visualization of gravitational lensing based on Einstein's General
-Relativity. Light from a background star field is deflected by a movable mass,
-using the thin-lens approximation, computed for every pixel on screen. It runs
-in the browser on desktop and mobile, with no installation.
+Relativity. Light from a background is deflected by a mass that can be moved
+across the sky and along the line of sight, using the thin-lens approximation,
+computed for every pixel on screen. It runs in the browser on desktop and
+mobile, with no installation.
+
+The background has depth. It is four planes at different distances, each lensed
+by its own Einstein radius, so a plane further away is deflected more strongly
+and a plane in front of the lens is not deflected at all. Three real Hubble
+images can be used instead.
 
 The repository holds two implementations of the same calculation. The equations,
 constants and background layout are identical between them.
@@ -14,6 +20,8 @@ constants and background layout are identical between them.
 |---|---|---|
 | Entry point | `index.html` | `main.py` |
 | Computation | WebGL2 fragment shader (GPU) | NumPy (CPU) |
+| Background | Four planes in depth, or a Hubble image | One plane |
+| Lens position | Across the sky and along the line of sight | Across the sky |
 | Display | Any viewport, desktop and mobile | Fixed 800x600 window |
 | Requirements | A browser with WebGL2 | `pygame`, `numpy` |
 
@@ -32,17 +40,19 @@ Then visit `http://localhost:8000/`.
 
 | Action | Desktop | Touch |
 |---|---|---|
-| Move the mass | Move the cursor | Drag |
-| Change the mass | Scroll, or the up and down arrow keys | Pinch |
-| Change the mass | The slider, on either | |
+| Move the mass across the sky | Move the cursor | Drag |
+| Move it along the line of sight | Scroll | Pinch |
+| Change the mass | Up and down arrow keys | — |
+| Either, precisely | The sliders | The sliders |
 
 ### Structure
 
 ```
 index.html          the page, with the simulation and a description of the physics
 src/lensing.js      WebGL2 setup, the lensing shader, and input handling
-src/background.js   generation of the background star field
+src/background.js   generation of the four procedural background planes
 src/style.css       page styling
+images/             Hubble backgrounds, two resolutions each
 ```
 
 ## Python version
@@ -62,31 +72,86 @@ angle in the weak-field limit is
 
     θ = 4GM / c²r
 
-This is Einstein's thin-lens approximation. The image is built by working
-backwards: for each screen pixel at an angular distance θ from the lens centre,
-the source-plane position is
+This is Einstein's thin-lens approximation. How strongly a given mass lenses a
+given source is not a property of the mass alone: it depends on where the lens
+sits between observer and source. With *D_L* the distance to the lens, *D_S* the
+distance to the source and *D_LS* the distance between them, the Einstein radius
+is
 
-    β = θ - θ_E² / θ
+    θ_E² = (4GM/c²) · D_LS / (D_L · D_S)
 
-where θ_E is the Einstein radius. The pixel takes the brightness of the
-background at β, magnified by
+Distances are in units of a reference source distance *D_S* = 1, with the
+reference lens at *D_L* = 0.5, where the geometric factor is exactly 1.
+Calibrating θ_E = 20M there reproduces `main.py` unchanged and gives, for any
+other geometry,
 
-    µ = | θ / β |
+    θ_E² = (20M)² · (D_S − D_L) / (D_L · D_S)
 
-which is clamped to a factor of four. Where β passes through zero the source is
-smeared into a complete Einstein ring. Inside the Schwarzschild radius r_s the
-pixels are black; between r_s and 1.5 r_s, the photon sphere, they are darkened.
-A thin white circle marks r_s.
+Three consequences, all visible on screen:
+
+- **A more distant source is lensed more strongly.** The four procedural planes
+  sit at *D_S* = 0.20, 0.80, 1.50 and 3.20, so their rings do not coincide.
+- **A source in front of the lens is not lensed, and is not hidden by it.** When
+  *D_S* ≤ *D_L* there is no deflection, and the horizon does not occlude that
+  plane either, since it lies behind it. Push the lens away and the planes drop
+  out one at a time, nearest first, until the foreground stars sit undisturbed
+  over a black disc.
+- **The horizon subtends a smaller angle from further away.** With r_s = 1.5M in
+  the same length units, its angular size is r_s / D_L, which is 3M at the
+  reference distance, as in `main.py`.
+
+The image is built by working backwards. For each screen pixel at an angular
+distance θ from the lens centre, and for each plane, the source-plane position is
+
+    β = θ − θ_E² / θ
+
+The plane contributes its brightness at β, magnified by µ = | θ / β | and clamped
+to a factor of four, and the planes are added, because light adds. Where β passes
+through zero the source is smeared into a complete Einstein ring. Inside the
+Schwarzschild radius the pixels are black; between r_s and 1.5 r_s, the photon
+sphere, they are darkened. A thin white circle marks r_s.
+
+### Where the approximation ends
 
 The thin-lens formula is a weak-field result, and both implementations apply it
-right up to the horizon, where it no longer holds. A correct treatment there
+right up to the horizon, where it no longer holds; a correct treatment there
 requires integrating null geodesics in the Schwarzschild metric, which produces
-higher-order images the thin lens cannot reproduce.
+higher-order images the thin lens cannot reproduce. Distances are treated as
+adding and subtracting in flat space, so *D_LS* = *D_S* − *D_L*; in cosmology the
+angular diameter distances do not combine that way, so these distances order the
+scene correctly without standing for real redshifts. And the background planes
+are flat sheets at fixed distances rather than a continuous matter distribution.
+
+## Backgrounds
+
+The procedural field is generated from a fixed seed and has depth. The three
+photographic backgrounds are real Hubble images, and are single planes at
+*D_S* = 1.5, since a photograph records no depth.
+
+| Background | Source | Credit |
+|---|---|---|
+| Ultra Deep Field | [heic0611b](https://esahubble.org/images/heic0611b/) | NASA, ESA, S. Beckwith (STScI) and the HUDF Team |
+| eXtreme Deep Field | [heic1214a](https://esahubble.org/images/heic1214a/) | NASA, ESA, G. Illingworth, D. Magee, P. Oesch, R. Bouwens and the HUDF09 Team |
+| Abell 370 | [heic1711a](https://esahubble.org/images/heic1711a/) | NASA, ESA/Hubble, HST Frontier Fields |
+
+Used under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), per the
+[ESA/Hubble copyright terms](https://esahubble.org/copyright/). Each is cropped
+to the field's 8:7 aspect ratio and served at two resolutions; the page loads the
+larger one where the device's `MAX_TEXTURE_SIZE` and screen allow it, and the
+smaller one on phones. Images are fetched only when selected.
+
+The arcs already visible in Abell 370 are real gravitational lensing, produced by
+that cluster's own mass. Placing the simulated lens over it puts one lens in
+front of another.
 
 ## Differences between the two versions
 
 The physics is unchanged. The web version differs in its rendering only:
 
+- The background has depth: four planes at different source distances, each
+  with its own Einstein radius, and the lens can be moved along the line of
+  sight. `main.py` has one plane at a fixed distance. At the reference geometry
+  the two agree exactly.
 - The background is sampled bilinearly rather than at the nearest texel, which
   removes the pixel break-up visible under magnification in the Python version.
 - It renders at the display's own resolution, and the shorter side of the

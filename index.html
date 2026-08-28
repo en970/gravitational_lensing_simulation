@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Gravitational Lensing Simulation</title>
-<meta name="description" content="A real-time gravitational lensing simulation. Light from a background star field is deflected by a movable mass, using Einstein's thin-lens approximation, computed per pixel on the GPU.">
+<meta name="description" content="A real-time gravitational lensing simulation with a background in depth. A movable mass deflects light from planes at different distances, each with its own Einstein radius, computed per pixel on the GPU.">
 <meta name="color-scheme" content="dark">
 <link rel="stylesheet" href="src/style.css">
 </head>
@@ -20,15 +20,30 @@
     </header>
 
     <p class="hint" id="hint">
-      <span class="hint-desktop">Move the cursor to reposition the mass. Scroll or use the arrow keys to change it.</span>
-      <span class="hint-touch">Drag to reposition the mass. Pinch to change it.</span>
+      <span class="hint-desktop">Move the cursor to reposition the mass. Scroll to move it along the line of sight.</span>
+      <span class="hint-touch">Drag to reposition the mass. Pinch to move it along the line of sight.</span>
     </p>
 
-    <div class="controls">
-      <label for="mass-slider">Mass</label>
-      <input id="mass-slider" type="range" min="0" max="1" step="0.001" value="0.5"
-             aria-label="Lens mass">
-      <output id="mass-value" for="mass-slider">5.0</output>
+    <div class="panel">
+      <div class="picker" id="picker" role="group" aria-label="Background"></div>
+
+      <div class="sliders">
+        <div class="control">
+          <label for="mass-slider">Mass</label>
+          <input id="mass-slider" type="range" min="0" max="1" step="0.001" value="0.5"
+                 aria-label="Lens mass">
+          <output id="mass-value" for="mass-slider">5.0</output>
+        </div>
+        <div class="control">
+          <label for="dist-slider">Distance</label>
+          <input id="dist-slider" type="range" min="0" max="1" step="0.001" value="0.5"
+                 aria-label="Lens distance along the line of sight">
+          <output id="dist-value" for="dist-slider">0.50</output>
+        </div>
+      </div>
+
+      <p class="credit" id="credit" hidden></p>
+      <p class="notice" id="notice" hidden></p>
     </div>
 
     <p class="loading" id="loading">Generating the background field</p>
@@ -76,64 +91,140 @@
       measurement confirmed.
     </p>
 
+    <h3>Why distance matters</h3>
+
+    <p>
+      How strongly a given mass lenses a given source is not a property of the mass alone.
+      It depends on where the lens sits between the observer and the source. Writing
+      <em>D</em><sub>L</sub> for the distance to the lens, <em>D</em><sub>S</sub> for the
+      distance to the source and <em>D</em><sub>LS</sub> for the distance between them,
+      the Einstein radius is
+    </p>
+
+    <p class="equation">&theta;<sub>E</sub><sup>2</sup> = (4<abbr title="gravitational constant">G</abbr><em>M</em>/<abbr title="speed of light">c</abbr><sup>2</sup>) &middot; <em>D</em><sub>LS</sub> / (<em>D</em><sub>L</sub> <em>D</em><sub>S</sub>)</p>
+
+    <p>
+      Scrolling moves the lens along the line of sight, which changes
+      <em>D</em><sub>L</sub> and so changes &theta;<sub>E</sub>. Three things follow, and
+      all three are visible on screen.
+    </p>
+
+    <p>
+      <strong>A more distant source is lensed more strongly.</strong> The procedural
+      background is not one image but four planes, at different distances, and each is
+      deflected by its own Einstein radius. The rings they form do not coincide; the
+      furthest plane makes the widest one.
+    </p>
+
+    <p>
+      <strong>A source in front of the lens is not lensed at all.</strong> When
+      <em>D</em><sub>S</sub> is less than <em>D</em><sub>L</sub> the factor
+      <em>D</em><sub>LS</sub> is negative and there is no lensing: the light reaches the
+      observer without ever passing the mass. Those planes are also not hidden by the
+      black hole, because they lie in front of it. Push the lens far enough away and the
+      planes drop out of the effect one at a time, nearest first, until the foreground
+      stars sit undisturbed over a black disc.
+    </p>
+
+    <p>
+      <strong>The horizon looks smaller from further away.</strong> The Schwarzschild
+      radius is a fixed length, so the angle it subtends is
+      <em>r</em><sub>s</sub>&thinsp;/&thinsp;<em>D</em><sub>L</sub>. The black disc and
+      the white circle marking it shrink as the lens recedes.
+    </p>
+
     <h3>What the simulation computes</h3>
 
     <p>
       The image is built by working backwards. For each pixel on the screen, at an angular
-      distance &theta; from the centre of the lens, the simulation asks where in the
-      background field that light must have come from. Writing &theta;<sub>E</sub> for the
-      Einstein radius, the source-plane position &beta; is
+      distance &theta; from the centre of the lens, and for each background plane, the
+      simulation asks where in that plane the light must have come from:
     </p>
 
     <p class="equation">&beta; = &theta; &minus; &theta;<sub>E</sub><sup>2</sup> / &theta;</p>
 
     <p>
-      The pixel then takes the brightness of the background at &beta;. Because a range of
-      source positions is compressed into a smaller range of image positions, the
-      background is also magnified, by
+      The plane contributes its brightness at &beta;, magnified by
+      &mu;&nbsp;=&nbsp;|&thinsp;&theta;&thinsp;/&thinsp;&beta;&thinsp;|, and the planes are
+      added, because light adds. Where &beta; passes through zero, &mu; diverges and the
+      source is smeared into a complete ring — the Einstein ring. The magnification is
+      clamped to a factor of four, so the ring stays within the display range rather than
+      saturating.
     </p>
 
-    <p class="equation">&mu; = | &theta; / &beta; |</p>
-
     <p>
-      Where &beta; passes through zero, &mu; diverges and the source is smeared into a
-      complete ring — the Einstein ring. In the simulation the magnification is clamped to
-      a factor of four, so the ring stays within the display range rather than saturating.
-    </p>
-
-    <h3>The dark centre</h3>
-
-    <p>
-      Two regions near the centre are handled separately. Inside the Schwarzschild radius
-      <em>r</em><sub>s</sub> no light escapes, so those pixels are black. Between
+      Inside the Schwarzschild radius no light escapes, so those pixels are black. Between
       <em>r</em><sub>s</sub> and 1.5&thinsp;<em>r</em><sub>s</sub> lies the photon sphere,
-      where light can orbit; it is darkened rather than removed. The thin white circle
-      marks <em>r</em><sub>s</sub> at the current mass.
+      where light can orbit; it is darkened rather than removed.
     </p>
 
     <h3>Where the approximation ends</h3>
 
     <p>
-      The thin-lens formula is a weak-field result, and this simulation applies it right up
-      to the horizon, where it no longer holds. Close to <em>r</em><sub>s</sub> a correct
-      treatment requires integrating null geodesics in the Schwarzschild metric, which
-      produces higher-order images and an Einstein ring structure the thin lens cannot
-      reproduce. What is shown here is the weak-field picture, drawn everywhere.
+      Three simplifications are worth naming. The thin-lens formula is a weak-field
+      result, and this simulation applies it right up to the horizon, where it no longer
+      holds; a correct treatment there requires integrating null geodesics in the
+      Schwarzschild metric, which produces higher-order images the thin lens cannot
+      reproduce. The distances are treated as adding and subtracting in flat space, so
+      <em>D</em><sub>LS</sub>&nbsp;=&nbsp;<em>D</em><sub>S</sub>&nbsp;&minus;&nbsp;<em>D</em><sub>L</sub>;
+      in cosmology the angular diameter distances do not combine that way, so the numbers
+      here order the scene correctly without standing for real redshifts. And the
+      background planes are flat sheets at fixed distances rather than a continuous
+      distribution of matter.
+    </p>
+
+    <h3>The photographic backgrounds</h3>
+
+    <p>
+      Three real Hubble images can be used as the background instead of the procedural
+      field. They are single planes — a photograph records no depth — so with these
+      selected the scene has no layered structure, though the lens still moves along the
+      line of sight and the Einstein radius still responds.
+    </p>
+
+    <p>
+      Abell 370 is worth a moment. The arcs and streaks already visible in that image are
+      real gravitational lensing, produced by the cluster's own mass acting on galaxies
+      behind it. Placing the simulated lens over it puts one lens in front of another.
+    </p>
+
+    <ul class="credits">
+      <li>
+        <a href="https://esahubble.org/images/heic0611b/">Hubble Ultra Deep Field</a> —
+        NASA, ESA, S. Beckwith (STScI) and the HUDF Team
+      </li>
+      <li>
+        <a href="https://esahubble.org/images/heic1214a/">Hubble eXtreme Deep Field</a> —
+        NASA, ESA, G. Illingworth, D. Magee, P. Oesch, R. Bouwens and the HUDF09 Team
+      </li>
+      <li>
+        <a href="https://esahubble.org/images/heic1711a/">Abell 370, Frontier Fields</a> —
+        NASA, ESA/Hubble, HST Frontier Fields
+      </li>
+    </ul>
+
+    <p class="fine">
+      Used under <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>,
+      per the <a href="https://esahubble.org/copyright/">ESA/Hubble copyright terms</a>.
+      Each image is cropped to the field's aspect ratio and served at two resolutions;
+      the page picks the larger one where the device's texture limit and screen allow it.
     </p>
 
     <h3>Implementation</h3>
 
     <p>
       The calculation is per-pixel and order-independent, so it runs as a WebGL2 fragment
-      shader: one pass, no geometry, at display resolution. The background field — stars,
-      spiral galaxies, clusters and nebulae — is generated once from a fixed seed and
-      uploaded as a single-channel texture, then sampled bilinearly through the deflection.
+      shader: one pass, no geometry, at display resolution. The procedural planes are
+      generated once from a fixed seed and uploaded as a single-channel texture array.
     </p>
 
     <p>
       The <a href="https://github.com/en970/gravitational_lensing_simulation/blob/main/main.py">original Python version</a>
-      performs the same computation with NumPy and pygame on the CPU. The equations,
-      constants and background layout are unchanged between the two.
+      performs the same computation with NumPy and pygame on the CPU, for one plane at a
+      fixed distance. At the reference geometry — a single source at
+      <em>D</em><sub>S</sub>&nbsp;=&nbsp;1 with the lens halfway to it — the two agree
+      exactly: the geometric factor equals one, &theta;<sub>E</sub> is 20<em>M</em> and
+      the horizon subtends 3<em>M</em>, as it does in <code>main.py</code>.
     </p>
 
     <h3>Controls</h3>
@@ -143,9 +234,10 @@
         <tr><th scope="col">Action</th><th scope="col">Desktop</th><th scope="col">Touch</th></tr>
       </thead>
       <tbody>
-        <tr><td>Move the mass</td><td>Move the cursor</td><td>Drag</td></tr>
-        <tr><td>Change the mass</td><td>Scroll, or the up and down arrow keys</td><td>Pinch</td></tr>
-        <tr><td>Change the mass</td><td colspan="2">The slider, on either</td></tr>
+        <tr><td>Move the mass across the sky</td><td>Move the cursor</td><td>Drag</td></tr>
+        <tr><td>Move it along the line of sight</td><td>Scroll</td><td>Pinch</td></tr>
+        <tr><td>Change the mass</td><td>Up and down arrow keys</td><td>&mdash;</td></tr>
+        <tr><td>Either, precisely</td><td colspan="2">The sliders</td></tr>
       </tbody>
     </table>
 
