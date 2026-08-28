@@ -104,6 +104,7 @@ void main() {
 precision highp float;
 
 #define MAX_STEPS 32
+#define SHELLS 26.0
 
 uniform sampler2D uPhoto;
 
@@ -220,19 +221,24 @@ void main() {
     float steps = float(uSteps);
     float ratio = uFar / uNear;
 
+    // The volume is divided into a fixed set of shells, spaced logarithmically.
+    // Sampling fewer of them skips shells; it never moves them. Depth and hash
+    // identity therefore depend on the shell, not on the sample count, so
+    // changing quality does not rebuild the sky underneath the viewer.
+    float stride = SHELLS / steps;
+
     for (int i = 0; i < MAX_STEPS; i++) {
       if (i >= uSteps) break;
 
-      // Logarithmic spacing: more samples where the volume is nearer and its
-      // structure is coarser on the sky.
-      float t  = (float(i) + 0.5) / steps;
-      float dS = uNear * pow(ratio, t);
+      float shell = floor(float(i) * stride) + 0.5;
+      float t     = shell / SHELLS;
+      float dS    = uNear * pow(ratio, t);
 
       float tE2  = einsteinSq(dS);
       float beta = theta - tE2 / theta;
       vec2  src  = uLens + beta * dir;
 
-      vec3 v = skySlice(src, dS, float(i) * 3.7);
+      vec3 v = skySlice(src, dS, shell * 3.7);
 
       if (tE2 > 0.0) {
         v *= clamp(abs(theta / (beta + 0.1)), 0.5, 4.0);
@@ -403,7 +409,8 @@ void main() {
     var loadToken = 0;
     var lastTime = 0;
     var frameAvg = 16.7;
-    var tuneIn = 30;
+    var tuneIn = 20;
+    var warmup = 70;   // shader compile and first uploads are not typical frames
 
     function resize() {
       var dpr = Math.min(window.devicePixelRatio || 1, 2) * st.renderScale;
@@ -493,6 +500,19 @@ void main() {
       fitBtn.hidden = st.mode !== 1;
     }
 
+    /* Photographs load in two stages. A small preview arrives almost at once
+       and is shown immediately; the full-resolution file follows and replaces
+       it. Both requests start together, and a late preview never overwrites a
+       full image that already landed. */
+    function uploadImage(img) {
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, photoTex);
+      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, img);
+      st.photoAspect = img.naturalWidth / img.naturalHeight;
+    }
+
     function selectBackground(bg) {
       markSelected(bg.id);
 
@@ -506,35 +526,42 @@ void main() {
       }
 
       var token = ++loadToken;
+      var applied = 0;              // 0 nothing, 1 preview, 2 full
+      var failures = 0;
       showNotice('Loading ' + bg.label);
 
-      var img = new Image();
-      img.decoding = 'async';
-      img.onload = function () {
-        if (token !== loadToken) return;
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, photoTex);
-        gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
-        try {
-          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, img);
-        } catch (err) {
-          showNotice('Could not upload ' + bg.label + '.');
-          selectBackground(BACKGROUNDS[0]);
-          return;
-        }
-        st.photoAspect = img.naturalWidth / img.naturalHeight;
-        st.mode = 1;
-        setCredit(bg);
-        showNotice('');
-        updateFitButton();
-      };
-      img.onerror = function () {
-        if (token !== loadToken) return;
-        showNotice('Could not load ' + bg.label + '.');
-        selectBackground(BACKGROUNDS[0]);
-      };
-      img.src = bg.base + (highRes ? '-high.jpg' : '-low.jpg');
+      function stage(url, rank, isFull) {
+        var img = new Image();
+        img.decoding = 'async';
+        img.onload = function () {
+          if (token !== loadToken || rank <= applied) return;
+          try {
+            uploadImage(img);
+          } catch (err) {
+            showNotice('Could not upload ' + bg.label + '.');
+            selectBackground(BACKGROUNDS[0]);
+            return;
+          }
+          applied = rank;
+          st.mode = 1;
+          setCredit(bg);
+          updateFitButton();
+          showNotice(isFull ? '' : 'Sharpening ' + bg.label);
+        };
+        img.onerror = function () {
+          if (token !== loadToken) return;
+          failures++;
+          /* One tier failing is survivable as long as the other lands. */
+          if (failures >= 2 && applied === 0) {
+            showNotice('Could not load ' + bg.label + '.');
+            selectBackground(BACKGROUNDS[0]);
+          }
+        };
+        img.src = url;
+      }
+
+      stage(bg.base + '-preview.jpg', 1, false);
+      stage(bg.base + (highRes ? '-high.jpg' : '-low.jpg'), 2, true);
     }
 
     BACKGROUNDS.forEach(function (bg) {
@@ -645,7 +672,9 @@ void main() {
       /* Adaptive quality. The volume is the expensive path, so give up depth
          samples first and resolution only once those run out. Photographs are
          one texture fetch and never need it. */
-      if (st.mode === 0) {
+      if (warmup > 0) { warmup--; lastTime = now; }
+
+      if (st.mode === 0 && warmup === 0) {
         frameAvg += (Math.min(raw, 100) - frameAvg) * 0.1;
         if (--tuneIn <= 0) {
           tuneIn = 20;

@@ -146,9 +146,14 @@ Used under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), per the
 [ESA/Hubble copyright terms](https://esahubble.org/copyright/). Each keeps its
 original aspect ratio, uncropped, and is served at two resolutions — the long
 edge at 4096 and at 2048, never upscaled past the source. The page loads the
-larger one where the device's `MAX_TEXTURE_SIZE` and screen allow it. Images are
-fetched only when selected, and a **Fill / Fit** toggle chooses between covering
-the viewport and showing the whole frame.
+larger one where the device's `MAX_TEXTURE_SIZE` and screen allow it. Images are fetched only when
+selected, and a **Fill / Fit** toggle chooses between covering the viewport and
+showing the whole frame.
+
+Each image is also built at a third, small size. Selecting a background starts
+both requests at once: the ~250 kB preview lands almost immediately and is shown
+straight away, and the full-resolution file replaces it when it arrives. A late
+preview never overwrites a full image that already landed.
 
 The arcs already visible in Abell 370 are real gravitational lensing, produced by
 that cluster's own mass. Placing the simulated lens over it puts one lens in
@@ -163,7 +168,10 @@ The physics is unchanged. The web version differs in its rendering only:
   `main.py` has one plane at a fixed distance. At the reference geometry the two
   agree exactly.
 - Depth sample count and render scale adapt to measured frame time, so the
-  simulation holds its frame rate on hardware of very different capability.
+  simulation holds its frame rate on hardware of very different capability. The
+  volume is divided into a fixed set of shells; sampling fewer of them skips
+  shells rather than moving them, so changing quality never rebuilds the sky
+  underneath the viewer.
 - The background is sampled bilinearly rather than at the nearest texel, which
   removes the pixel break-up visible under magnification in the Python version.
 - It renders at the display's own resolution, and the shorter side of the
