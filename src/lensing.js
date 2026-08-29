@@ -81,8 +81,6 @@
   var STEPS_LOW   = 10;
   var SCALE_MIN   = 0.50;
 
-  var PHOTO_DISTANCE = 1.5;
-
   /* How quickly the view follows input. 1 would be instant; lower is smoother.
      Applied per frame and corrected for frame time, so the feel does not
      change with refresh rate. */
@@ -97,19 +95,6 @@
   var IDLE_MS    = 3500;
   var DRIFT_EASE = 2.2;     /* seconds to blend fully into the path */
 
-  var BACKGROUNDS = [
-    { id: 'procedural', label: 'Procedural', kind: 'volume' },
-    { id: 'hudf',  label: 'Ultra Deep Field', kind: 'photo', base: 'images/hudf',
-      credit: 'NASA, ESA, S. Beckwith (STScI) and the HUDF Team',
-      link: 'https://esahubble.org/images/heic0611b/' },
-    { id: 'xdf',   label: 'eXtreme Deep Field', kind: 'photo', base: 'images/xdf',
-      credit: 'NASA, ESA, G. Illingworth, D. Magee, P. Oesch, R. Bouwens and the HUDF09 Team',
-      link: 'https://esahubble.org/images/heic1214a/' },
-    { id: 'abell370', label: 'Abell 370', kind: 'photo', base: 'images/abell370',
-      credit: 'NASA, ESA/Hubble, HST Frontier Fields',
-      link: 'https://esahubble.org/images/heic1711a/' }
-  ];
-
   var VERT_SRC = `#version 300 es
 void main() {
   vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
@@ -122,17 +107,12 @@ precision highp float;
 #define MAX_STEPS 32
 #define SHELLS 26.0
 
-uniform sampler2D uPhoto;
-
-uniform int   uMode;            // 0 = procedural volume, 1 = photograph
+uniform sampler2D uCat;
 uniform int   uSteps;
 uniform float uNear;
 uniform float uFar;
 uniform float uCellSize;
 uniform float uFill;
-
-uniform vec2  uPhotoField;      // photograph extent, in simulation units
-uniform float uPhotoDist;
 
 uniform vec2  uSimSize;         // viewport, in simulation units
 uniform vec2  uLens;            // lens centre, simulation units, y downwards
@@ -149,29 +129,22 @@ vec3 hash33(vec3 p) {
   return fract((p.xxy + p.yxx) * p.zyx);
 }
 
-// Nearby stars run blue-white; distant galaxies redden. The real trend, and a
-// strong depth cue.
-vec3 tintFor(float dS, float which) {
-  vec3 nearC = vec3(0.82, 0.88, 1.00);
-  vec3 midC  = vec3(1.00, 0.98, 0.94);
-  vec3 farC  = vec3(1.00, 0.78, 0.58);
-  float t = clamp((dS - 0.30) / 2.20, 0.0, 1.0);
-  vec3 c = mix(nearC, midC, smoothstep(0.0, 0.45, t));
-  c = mix(c, farC, smoothstep(0.35, 1.0, t));
-  return c * (0.85 + 0.30 * which);
+// Reddening with distance, applied on top of an object's own colour.
+vec3 distanceTint(float dS) {
+  return mix(vec3(1.0, 1.0, 1.0), vec3(1.00, 0.74, 0.55),
+             smoothstep(0.35, 2.6, dS));
 }
 
-// One depth slice of the sky. Objects sit on a grid whose angular cell size
-// shrinks as 1/D_S, so a fixed physical size subtends a smaller angle further
-// away and a more distant shell holds more objects per unit solid angle.
+// One depth slice. Objects sit on a grid whose angular cell size shrinks as
+// 1/D_S, so a fixed physical size subtends a smaller angle further away and a
+// more distant shell holds more objects per unit solid angle.
 vec3 skySlice(vec2 ang, float dS, float id) {
   float cell = uCellSize / dS;
   vec2  p    = ang / cell;
   vec2  base = floor(p);
   vec2  f    = p - base;
 
-  float starry = 1.0 - smoothstep(0.28, 0.46, dS);
-  vec3  acc    = vec3(0.0);
+  vec3 acc = vec3(0.0);
 
   for (int j = -1; j <= 1; j++) {
     for (int i = -1; i <= 1; i++) {
@@ -179,78 +152,83 @@ vec3 skySlice(vec2 ang, float dS, float id) {
       vec3 h = hash33(vec3(c, id));
       if (h.z > uFill) continue;
 
-      vec3  h2    = hash33(vec3(c.yx, id + 17.0));
       vec2  delta = f - (vec2(float(i), float(j)) + h.xy);
       float d     = length(delta);
-      if (d > 1.4) continue;
+      // No cataloged object is wider than this in cell units, so most of the
+      // 3x3 neighbourhood is rejected before touching the catalogue.
+      if (d > 0.52) continue;
 
-      // Most things are faint; a few are bright. A plain uniform draw made
-      // every galaxy equally prominent, which is what read as artificial.
-      float bright = 0.16 + 0.84 * pow(h2.x, 1.6);
+      // One row of the catalogue: four texels, selected by weight.
+      int row = int(h.x * 255.0 + h.y * 37.0) & 255;
+      vec4 t0 = texelFetch(uCat, ivec2(0, row), 0);   // core.rgb, primitive
+      vec4 t1 = texelFetch(uCat, ivec2(1, row), 0);   // outer.rgb, size
+      vec4 t2 = texelFetch(uCat, ivec2(2, row), 0);   // bright, aniso, spike, p1
+      vec4 t3 = texelFetch(uCat, ivec2(3, row), 0);   // p2
+
+      float prim  = t0.w;
+      float size  = t1.w;
+      float reach = size * 3.2 + 0.006;
+      if (d > reach) continue;
+
+      // Inclination: squash along a random axis, straight from the hash, so
+      // most objects present as ellipses. No trigonometry.
+      vec2  ax = normalize(h.xy * 2.0 - 1.0 + 1e-4);
+      vec2  e  = vec2(dot(delta, ax), dot(delta, vec2(-ax.y, ax.x)));
+      e.y /= max(0.12, 1.0 - t2.y);
+      float r = length(e) / size;
+
       float v;
-      vec3  col;
 
-      if (h2.z < starry) {
-        // A star. Colour by temperature rather than painting them all white.
-        float temp  = h.x;
-        vec3  hot   = vec3(0.74, 0.83, 1.00);
-        vec3  sun   = vec3(1.00, 0.96, 0.88);
-        vec3  cool  = vec3(1.00, 0.78, 0.60);
-        col = mix(mix(hot, sun, smoothstep(0.0, 0.55, temp)),
-                  cool, smoothstep(0.55, 1.0, temp));
-        float core  = exp(-d * d * 4200.0);
-        float spike = exp(-(abs(delta.x) * 260.0 + abs(delta.y) * 22.0))
-                    + exp(-(abs(delta.y) * 260.0 + abs(delta.x) * 22.0));
-        v = (core + 0.06 * spike) * 2.3;
-      } else {
-        float scale = 0.040 + 0.070 * h2.x;
-
-        // Inclination: squash along a random axis, so most galaxies present as
-        // ellipses rather than face-on discs. Built from the hash directly, so
-        // it costs no trigonometry.
-        vec2  ax   = normalize(h.xy * 2.0 - 1.0 + 1e-4);
-        vec2  e    = vec2(dot(delta, ax), dot(delta, vec2(-ax.y, ax.x)));
-        float incl = 0.22 + 0.78 * h2.y;          // axis ratio
-        e.y /= incl;
-        float r = length(e) / scale;
-
-        vec3 coreC = vec3(1.00, 0.87, 0.68);      // old stars, yellow-red
-        vec3 outerC;
-
-        float core = exp(-r * r * 2.6);
+      if (prim < 0.5) {
+        // POINT: a star. Tight core plus a diffraction cross.
+        float core  = exp(-r * r * 2.2);
+        float spike = exp(-(abs(e.x) * 26.0 + abs(e.y) * 2.6) / size)
+                    + exp(-(abs(e.y) * 26.0 + abs(e.x) * 2.6) / size);
+        v = core + t2.z * 0.05 * spike;
+        v *= 2.1;
+      } else if (prim < 3.5) {
+        // SPIRAL / SERSIC / SHELL: disc-like, separated by two parameters.
+        float core = exp(-r * r * 2.4);
         float disc = exp(-r * 1.6);
-        float typ  = fract(h2.z * 3.137);
-
-        if (typ < 0.42) {
-          // Elliptical: smooth, no arms, red throughout.
-          outerC = vec3(1.00, 0.80, 0.63);
-          v = max(core, disc * 0.85);
-        } else if (typ < 0.88) {
-          // Spiral: yellow core, blue arms.
-          outerC = vec3(0.70, 0.83, 1.00);
-          vec2  n2  = e / max(length(e), 1e-5);
-          float rot = r * 2.3 + h2.y * 6.2831;
+        float shape;
+        if (prim < 1.5) {
+          // spiral arms: rotate the offset by an angle growing with radius
+          vec2  n   = e / max(length(e), 1e-5);
+          float rot = r * (1.4 + t3.x) + h.y * 6.2831;
           float cr  = cos(rot), sr = sin(rot);
-          vec2  m   = vec2(n2.x * cr - n2.y * sr, n2.x * sr + n2.y * cr);
-          float arms = 0.30 + 0.70 * (m.x * m.x - m.y * m.y) * 0.5 + 0.35;
-          v = max(core, disc * arms);
+          vec2  m   = vec2(n.x * cr - n.y * sr, n.x * sr + n.y * cr);
+          shape = 0.62 + 0.38 * (m.x * m.x - m.y * m.y);
+        } else if (prim < 2.5) {
+          shape = 1.0;                                  // smooth de Vaucouleurs
         } else {
-          // Irregular: clumpy and blue, the way small starbursts look.
-          outerC = vec3(0.66, 0.86, 1.00);
-          float cl = 0.5 + 0.5 * sin(e.x * 34.0 / scale) * sin(e.y * 29.0 / scale);
-          v = disc * (0.35 + 0.65 * cl);
+          // shell: hollow, bright rim at p2
+          float rim = t3.x > 0.0 ? t3.x : 0.6;
+          shape = exp(-pow((r - rim * 2.2) * 1.9, 2.0)) * 1.7;
+          core *= 0.10;
         }
-
-        col = mix(coreC, outerC, smoothstep(0.10, 1.30, r));
-        v *= 1.35;
+        v = max(core, disc * shape);
+      } else {
+        // CLUMPY / DIFFUSE / BILOBE / HALO
+        float disc = exp(-r * 1.5);
+        if (prim < 4.5) {
+          float cl = 0.5 + 0.5 * sin(e.x * 31.0 / size) * sin(e.y * 27.0 / size);
+          v = disc * (0.34 + 0.66 * cl);
+        } else if (prim < 5.5) {
+          v = exp(-r * r * 0.85) * 0.85;                 // diffuse cloud
+        } else if (prim < 6.5) {
+          float lobe = e.y * e.y / max(1e-5, dot(e, e)); // two lobes about ax
+          v = disc * (0.14 + 0.86 * lobe);
+        } else {
+          v = max(exp(-r * r * 5.0), exp(-r * 1.1) * 0.42);  // core in a halo
+        }
       }
 
-      // Reddening with distance rides on top of the object's own colour.
-      acc += col * tintFor(dS, h2.y) * v * bright;
+      vec3 col = mix(t0.rgb, t1.rgb, smoothstep(0.10, 1.30, r));
+      acc += col * v * t2.x;
     }
   }
 
-  return acc / (dS * dS * 0.80 + 0.55);
+  return acc * distanceTint(dS) / (dS * dS * 0.80 + 0.55);
 }
 
 // θ_E² for a source at dS. Zero when the source is in front of the lens, which
@@ -273,61 +251,38 @@ void main() {
 
   vec3 color = vec3(0.0);
 
-  if (uMode == 0) {
-    float steps = float(uSteps);
-    float ratio = uFar / uNear;
+  float steps = float(uSteps);
+  float ratio = uFar / uNear;
 
-    // The volume is divided into a fixed set of shells, spaced logarithmically.
-    // Sampling fewer of them skips shells; it never moves them. Depth and hash
-    // identity therefore depend on the shell, not on the sample count, so
-    // changing quality does not rebuild the sky underneath the viewer.
-    float stride = SHELLS / steps;
+  // The volume is divided into a fixed set of shells, spaced logarithmically.
+  // Sampling fewer of them skips shells; it never moves them.
+  float stride = SHELLS / steps;
 
-    for (int i = 0; i < MAX_STEPS; i++) {
-      if (i >= uSteps) break;
+  for (int i = 0; i < MAX_STEPS; i++) {
+    if (i >= uSteps) break;
 
-      float shell = floor(float(i) * stride) + 0.5;
-      float t     = shell / SHELLS;
-      float dS    = uNear * pow(ratio, t);
+    float shell = floor(float(i) * stride) + 0.5;
+    float t     = shell / SHELLS;
+    float dS    = uNear * pow(ratio, t);
 
-      float tE2  = einsteinSq(dS);
-      float beta = theta - tE2 / theta;
-      vec2  src  = uLens + beta * dir;
-
-      vec3 v = skySlice(src, dS, shell * 3.7);
-
-      if (tE2 > 0.0) {
-        v *= clamp(abs(theta / (beta + 0.1)), 0.5, 4.0);
-      }
-      // The horizon and photon sphere only block what lies behind them.
-      if (dS > uLensDist) {
-        v *= smoothstep(uThetaS - aa, uThetaS + aa, theta);
-        v *= mix(0.3, 1.0, smoothstep(uThetaS * 1.5 - aa, uThetaS * 1.5 + aa, theta));
-      }
-
-      color += v;
-    }
-
-    color /= steps * 0.034;
-  } else {
-    float tE2  = einsteinSq(uPhotoDist);
+    float tE2  = einsteinSq(dS);
     float beta = theta - tE2 / theta;
     vec2  src  = uLens + beta * dir;
 
-    // The photograph is centred on the viewport and keeps its own aspect
-    // ratio; outside it there is nothing rather than a smeared edge.
-    vec2 uv = (src - uSimSize * 0.5) / uPhotoField + 0.5;
-    if (all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0)))) {
-      color = texture(uPhoto, uv).rgb;
-      if (tE2 > 0.0) {
-        color *= clamp(abs(theta / (beta + 0.1)), 0.5, 4.0);
-      }
+    vec3 v = skySlice(src, dS, shell * 3.7);
+
+    if (tE2 > 0.0) {
+      v *= clamp(abs(theta / (beta + 0.1)), 0.5, 4.0);
     }
-    if (uPhotoDist > uLensDist) {
-      color *= smoothstep(uThetaS - aa, uThetaS + aa, theta);
-      color *= mix(0.3, 1.0, smoothstep(uThetaS * 1.5 - aa, uThetaS * 1.5 + aa, theta));
+    if (dS > uLensDist) {
+      v *= smoothstep(uThetaS - aa, uThetaS + aa, theta);
+      v *= mix(0.3, 1.0, smoothstep(uThetaS * 1.5 - aa, uThetaS * 1.5 + aa, theta));
     }
+
+    color += v;
   }
+
+  color /= steps * 0.019;
 
   fragColor = vec4(clamp(color, 0.0, 1.0), 1.0);
 }`;
@@ -381,13 +336,10 @@ void main() {
     var massOut  = document.getElementById('mass-value');
     var distIn   = document.getElementById('dist-slider');
     var distOut  = document.getElementById('dist-value');
-    var picker   = document.getElementById('picker');
     var ambBtn   = document.getElementById('ambient-toggle');
-    var creditEl = document.getElementById('credit');
     var hint     = document.getElementById('hint');
     var loading  = document.getElementById('loading');
     var failure  = document.getElementById('failure');
-    var notice   = document.getElementById('notice');
 
     var gl = canvas.getContext('webgl2', {
       alpha: false, antialias: false, depth: false, stencil: false,
@@ -406,13 +358,16 @@ void main() {
       return;
     }
 
-    var photoTex = gl.createTexture();
+    /* Catalogue: 4 x 256 RGBA32F, one row per weighted slot. Sampled with
+       texelFetch only, so no float-filtering extension is needed. */
+    var cat = window.SkyCatalogue;
+    var catTex = gl.createTexture();
     gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, photoTex);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, 1, 1, 0, gl.RGB, gl.UNSIGNED_BYTE,
-                  new Uint8Array([0, 0, 0]));
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.bindTexture(gl.TEXTURE_2D, catTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, cat.ROW_TEXELS, cat.TABLE_ROWS, 0,
+                  gl.RGBA, gl.FLOAT, cat.pack());
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
@@ -420,22 +375,20 @@ void main() {
     gl.useProgram(program);
 
     var u = {};
-    ['uPhoto', 'uMode', 'uSteps', 'uNear', 'uFar', 'uCellSize', 'uFill',
-     'uPhotoField', 'uPhotoDist', 'uSimSize', 'uLens', 'uThetaE0', 'uLensDist',
-     'uThetaS', 'uPixelsPerUnit'].forEach(function (n) {
+    ['uCat', 'uSteps', 'uNear', 'uFar', 'uCellSize', 'uFill', 'uSimSize', 'uLens',
+     'uThetaE0', 'uLensDist', 'uThetaS', 'uPixelsPerUnit'].forEach(function (n) {
       u[n] = gl.getUniformLocation(program, n);
     });
 
     var highRes = wantsHighRes(gl);
 
-    gl.uniform1i(u.uPhoto, 0);
+    gl.uniform1i(u.uCat, 0);
     gl.uniform1f(u.uNear, DEPTH_NEAR);
     gl.uniform1f(u.uFar, DEPTH_FAR);
-    gl.uniform1f(u.uCellSize, 38.0);
-    gl.uniform1f(u.uFill, 0.13);
+    gl.uniform1f(u.uCellSize, 27.0);
+    gl.uniform1f(u.uFill, 0.26);
     var steps = highRes ? STEPS_HIGH : STEPS_LOW;
     gl.uniform1i(u.uSteps, steps);
-    gl.uniform1f(u.uPhotoDist, PHOTO_DISTANCE);
 
     /* Live values follow target values, so input reads as motion rather than
        as jumps. */
@@ -447,15 +400,12 @@ void main() {
       simW: 800, simH: 600,
       pixelsPerUnit: 1,
       lensPlaced: false,
-      mode: 0,
-      photoAspect: 1,
       renderScale: 1.0,
       ambient: false
     };
 
     var keys = { up: false, down: false };
     var interacted = false;
-    var loadToken = 0;
     var lastTime = 0;
     var frameAvg = 16.7;
     var tuneIn = 60;
@@ -482,14 +432,6 @@ void main() {
         st.lensY = st.lensYTarget = st.simH / 2;
       }
       gl.viewport(0, 0, w, h);
-    }
-
-    /* Photograph extent in simulation units: always covering the viewport,
-       cropping whatever the long edge does not need. */
-    function photoField() {
-      var a = st.photoAspect;
-      var s = Math.max(st.simW / a, st.simH);
-      return [s * a, s];
     }
 
     function toSim(cx, cy) {
@@ -557,101 +499,8 @@ void main() {
       };
     }
 
-    function showNotice(t) { notice.textContent = t || ''; notice.hidden = !t; }
 
-    function setCredit(bg) {
-      if (bg.kind !== 'photo') { creditEl.hidden = true; creditEl.innerHTML = ''; return; }
-      creditEl.hidden = false;
-      var a = document.createElement('a');
-      a.href = bg.link; a.target = '_blank'; a.rel = 'noopener';
-      a.textContent = bg.credit;
-      creditEl.innerHTML = '';
-      creditEl.appendChild(document.createTextNode('Image: '));
-      creditEl.appendChild(a);
-      creditEl.appendChild(document.createTextNode(' · CC BY 4.0'));
-    }
 
-    function markSelected(id) {
-      Array.prototype.forEach.call(picker.querySelectorAll('button'), function (b) {
-        var on = b.dataset.id === id;
-        b.classList.toggle('is-on', on);
-        b.setAttribute('aria-pressed', on ? 'true' : 'false');
-      });
-    }
-
-    /* Photographs load in two stages. A small preview arrives almost at once
-       and is shown immediately; the full-resolution file follows and replaces
-       it. Both requests start together, and a late preview never overwrites a
-       full image that already landed. */
-    function uploadImage(img) {
-      gl.activeTexture(gl.TEXTURE0);
-      gl.bindTexture(gl.TEXTURE_2D, photoTex);
-      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, img);
-      st.photoAspect = img.naturalWidth / img.naturalHeight;
-    }
-
-    function selectBackground(bg) {
-      markSelected(bg.id);
-
-      if (bg.kind === 'volume') {
-        loadToken++;
-        st.mode = 0;
-        setCredit(bg);
-        showNotice('');
-        return;
-      }
-
-      var token = ++loadToken;
-      var applied = 0;              // 0 nothing, 1 preview, 2 full
-      var failures = 0;
-      showNotice('Loading ' + bg.label);
-
-      function stage(url, rank, isFull) {
-        var img = new Image();
-        img.decoding = 'async';
-        img.onload = function () {
-          if (token !== loadToken || rank <= applied) return;
-          try {
-            uploadImage(img);
-          } catch (err) {
-            showNotice('Could not upload ' + bg.label + '.');
-            selectBackground(BACKGROUNDS[0]);
-            return;
-          }
-          applied = rank;
-          st.mode = 1;
-          setCredit(bg);
-          showNotice(isFull ? '' : 'Sharpening ' + bg.label);
-        };
-        img.onerror = function () {
-          if (token !== loadToken) return;
-          failures++;
-          /* One tier failing is survivable as long as the other lands. */
-          if (failures >= 2 && applied === 0) {
-            showNotice('Could not load ' + bg.label + '.');
-            selectBackground(BACKGROUNDS[0]);
-          }
-        };
-        img.src = url;
-      }
-
-      stage(bg.base + '-preview.jpg', 1, false);
-      stage(bg.base + (highRes ? '-high.jpg' : '-low.jpg'), 2, true);
-    }
-
-    BACKGROUNDS.forEach(function (bg) {
-      var b = document.createElement('button');
-      b.type = 'button';
-      b.dataset.id = bg.id;
-      b.textContent = bg.label;
-      b.setAttribute('aria-pressed', 'false');
-      b.addEventListener('click', function () { noteInteraction(); selectBackground(bg); });
-      picker.appendChild(b);
-    });
-
-    ambBtn.addEventListener('click', function () { setAmbient(!st.ambient); });
 
     /* ---- input --------------------------------------------------------- */
 
@@ -727,9 +576,6 @@ void main() {
     /* ---- render -------------------------------------------------------- */
 
     function draw() {
-      var f = photoField();
-      gl.uniform1i(u.uMode, st.mode);
-      gl.uniform2f(u.uPhotoField, f[0], f[1]);
       gl.uniform2f(u.uSimSize, st.simW, st.simH);
       gl.uniform2f(u.uLens, st.lensX, st.lensY);
       gl.uniform1f(u.uThetaE0, 20.0 * st.mass);
@@ -749,7 +595,7 @@ void main() {
          one texture fetch and never need it. */
       if (warmup > 0) { warmup--; lastTime = now; }
 
-      if (st.mode === 0 && warmup === 0) {
+      if (warmup === 0) {
         frameAvg += (Math.min(raw, 100) - frameAvg) * 0.1;
         if (tuneBudget > 0 && --tuneIn <= 0) {
           tuneIn = 60;
@@ -800,8 +646,6 @@ void main() {
     resize();
     setMass(MASS_INITIAL);
     setDist(DIST_INITIAL);
-    markSelected(BACKGROUNDS[0].id);
-    setCredit(BACKGROUNDS[0]);
     loading.hidden = true;
     idleSince = performance.now();
     draw();

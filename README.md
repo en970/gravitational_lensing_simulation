@@ -12,7 +12,7 @@ The background has volume. Rather than lensing one flat image, the shader walks
 the line of sight, sampling the sky at a sequence of depths and deflecting each
 depth by its own Einstein radius — multi-plane lensing in the limit of many
 planes. Material further away is bent more strongly, and material in front of
-the lens is not bent at all. Three real Hubble images can be used instead.
+the lens is not bent at all.
 
 The repository holds two implementations of the same calculation. The equations,
 constants and background layout are identical between them.
@@ -21,7 +21,7 @@ constants and background layout are identical between them.
 |---|---|---|
 | Entry point | `index.html` | `main.py` |
 | Computation | WebGL2 fragment shader (GPU) | NumPy (CPU) |
-| Background | A volume walked in depth, or a Hubble image | One plane |
+| Background | A volume walked in depth | One plane |
 | Lens position | Across the sky and along the line of sight | Across the sky |
 | Display | Any viewport, desktop and mobile | Fixed 800x600 window |
 | Requirements | A browser with WebGL2 | `pygame`, `numpy` |
@@ -66,7 +66,6 @@ cursor, and ignores the pointer — a screensaver. A tap, a click or Escape exit
 index.html          the page, with the simulation and a description of the physics
 src/lensing.js      WebGL2 setup, the lensing shader, and input handling
 src/style.css       page styling
-images/             Hubble backgrounds, two resolutions each
 ```
 
 ## Python version
@@ -138,47 +137,6 @@ angular diameter distances do not combine that way, so these distances order the
 scene correctly without standing for real redshifts. And the deflection at each
 depth is computed independently, rather than accumulating along the ray as true
 multi-plane lensing does.
-
-## Backgrounds
-
-The procedural sky is generated from a hash inside the shader rather than from a
-texture. It is therefore unbounded — there is no edge for the deflection to run
-off, which is what smeared the image at high mass — it costs nothing to load,
-and it stays sharp at any magnification.
-
-Objects are drawn with the variety a deep field actually shows. Galaxies are
-inclined by a random axis ratio, so most present as ellipses rather than
-face-on discs, and fall into three kinds: ellipticals, smooth and red; spirals,
-with a yellow core and blue arms; and irregulars, clumpy and blue. Brightness is
-skewed so that most are faint and a few stand out. Stars are coloured by
-temperature, and everything reddens with distance — the real trend, and a depth
-cue on top of the lensing.
-
-The three photographic backgrounds are real Hubble images, and are single planes
-at *D_S* = 1.5, since a photograph records no depth.
-
-| Background | Source | Credit |
-|---|---|---|
-| Ultra Deep Field | [heic0611b](https://esahubble.org/images/heic0611b/) | NASA, ESA, S. Beckwith (STScI) and the HUDF Team |
-| eXtreme Deep Field | [heic1214a](https://esahubble.org/images/heic1214a/) | NASA, ESA, G. Illingworth, D. Magee, P. Oesch, R. Bouwens and the HUDF09 Team |
-| Abell 370 | [heic1711a](https://esahubble.org/images/heic1711a/) | NASA, ESA/Hubble, HST Frontier Fields |
-
-Used under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), per the
-[ESA/Hubble copyright terms](https://esahubble.org/copyright/). Each keeps its
-original aspect ratio, uncropped, and is served at two resolutions — the long
-edge at 4096 and at 2048, never upscaled past the source. The page loads the
-larger one where the device's `MAX_TEXTURE_SIZE` and screen allow it. Images are fetched only when
-selected, and are framed to cover the viewport, cropping whatever the long edge
-does not need.
-
-Each image is also built at a third, small size. Selecting a background starts
-both requests at once: the ~250 kB preview lands almost immediately and is shown
-straight away, and the full-resolution file replaces it when it arrives. A late
-preview never overwrites a full image that already landed.
-
-The arcs already visible in Abell 370 are real gravitational lensing, produced by
-that cluster's own mass. Placing the simulated lens over it puts one lens in
-front of another.
 
 ## Differences between the two versions
 

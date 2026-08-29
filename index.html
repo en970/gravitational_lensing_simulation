@@ -28,8 +28,6 @@
     </p>
 
     <div class="panel">
-      <div class="picker" id="picker" role="group" aria-label="Background"></div>
-
       <div class="sliders">
         <div class="control">
           <label for="mass-slider">Mass</label>
@@ -45,8 +43,6 @@
         </div>
       </div>
 
-      <p class="credit" id="credit" hidden></p>
-      <p class="notice" id="notice" hidden></p>
     </div>
 
     <p class="loading" id="loading">Generating the background field</p>
@@ -178,43 +174,6 @@
       distribution of matter.
     </p>
 
-    <h3>The photographic backgrounds</h3>
-
-    <p>
-      Three real Hubble images can be used as the background instead of the procedural
-      field. They are single planes — a photograph records no depth — so with these
-      selected the scene has no layered structure, though the lens still moves along the
-      line of sight and the Einstein radius still responds.
-    </p>
-
-    <p>
-      Abell 370 is worth a moment. The arcs and streaks already visible in that image are
-      real gravitational lensing, produced by the cluster's own mass acting on galaxies
-      behind it. Placing the simulated lens over it puts one lens in front of another.
-    </p>
-
-    <ul class="credits">
-      <li>
-        <a href="https://esahubble.org/images/heic0611b/">Hubble Ultra Deep Field</a> —
-        NASA, ESA, S. Beckwith (STScI) and the HUDF Team
-      </li>
-      <li>
-        <a href="https://esahubble.org/images/heic1214a/">Hubble eXtreme Deep Field</a> —
-        NASA, ESA, G. Illingworth, D. Magee, P. Oesch, R. Bouwens and the HUDF09 Team
-      </li>
-      <li>
-        <a href="https://esahubble.org/images/heic1711a/">Abell 370, Frontier Fields</a> —
-        NASA, ESA/Hubble, HST Frontier Fields
-      </li>
-    </ul>
-
-    <p class="fine">
-      Used under <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>,
-      per the <a href="https://esahubble.org/copyright/">ESA/Hubble copyright terms</a>.
-      Each image is cropped to the field's aspect ratio and served at two resolutions;
-      the page picks the larger one where the device's texture limit and screen allow it.
-    </p>
-
     <h3>Implementation</h3>
 
     <p>
@@ -253,6 +212,7 @@
   </div>
 </main>
 
+<script src="src/catalogue.js"></script>
 <script src="src/lensing.js"></script>
 </body>
 </html>
