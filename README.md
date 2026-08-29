@@ -65,6 +65,7 @@ cursor, and ignores the pointer — a screensaver. A tap, a click or Escape exit
 ```
 index.html          the page, with the simulation and a description of the physics
 src/lensing.js      WebGL2 setup, the lensing shader, and input handling
+src/catalogue.js    154 object types, packed into a weighted lookup table
 src/style.css       page styling
 ```
 
@@ -137,6 +138,40 @@ angular diameter distances do not combine that way, so these distances order the
 scene correctly without standing for real redshifts. And the deflection at each
 depth is computed independently, rather than accumulating along the ray as true
 multi-plane lensing does.
+
+## The sky
+
+The background is generated from a hash inside the shader rather than from a
+texture. It is therefore unbounded — there is no edge for the deflection to run
+off, which is what smeared the image at high mass — it costs nothing to load,
+and it stays sharp at any magnification.
+
+What populates it comes from `src/catalogue.js`: 154 object types following the
+real taxonomy.
+
+| Category | Types | Examples |
+|---|---|---|
+| Stars | 77 | O3 V through Y1, giants and supergiants, white and brown dwarfs, Wolf-Rayets, Cepheids, Miras, neutron stars, magnetars, twelve supernova subtypes |
+| Galaxies | 42 | E0–E6, S0, Sa–Sd, SBa–SBd, irregulars, dwarfs, ring and polar-ring, mergers, ULIRGs, Seyferts, FR I/II radio galaxies, quasars, blazars, Lyman-break |
+| Nebulae | 25 | H II regions, reflection and dark nebulae, Bok globules, planetary nebulae (round, elliptical, bipolar, ring), supernova remnants (shell, plerion, Cas A-type), Herbig-Haro |
+| Clusters | 10 | Open clusters young to old, globulars metal-rich and metal-poor, OB and T associations |
+
+Types carry weights, so the mix on screen reflects the mix in space: M dwarfs
+are everywhere, O stars are rare, faint dwarf galaxies outnumber giant
+ellipticals. Stellar colours are blackbody, computed from temperature rather
+than picked by hand.
+
+Every type reduces to one of eight drawing primitives plus parameters, so shader
+cost is independent of how long the catalogue grows, and the list is packed into
+a 256-row table with types repeated in proportion to weight — selection is a
+single `texelFetch` with no search. Objects are inclined by a random axis ratio,
+so most present as ellipses rather than face-on discs, and everything reddens
+with distance.
+
+The catalogue is *faster* than the three hand-written shapes it replaced —
+9.1 ms against 15.5 ms per frame at 1280x860 on an M1 — because nothing in it is
+wider than 0.52 cell units, so most of the 3x3 neighbourhood is rejected before
+the catalogue is read at all.
 
 ## Differences between the two versions
 
