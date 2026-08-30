@@ -92,7 +92,7 @@
      sky by a visible amount, so the wrap read as the page reloading. A bounded
      path has no such discontinuity. The two frequencies are incommensurable,
      so it never repeats. */
-  var IDLE_MS    = 3500;
+  var IDLE_MS    = 1000;
   var DRIFT_EASE = 2.2;     /* seconds to blend fully into the path */
 
   var VERT_SRC = `#version 300 es
@@ -107,6 +107,12 @@ precision highp float;
 #define MAX_STEPS 32
 #define SHELLS 26.0
 
+// Scintillation amplitude. The two beats below sum to +/-2, so the peak
+// excursion in brightness is twice this. The beats are fast enough to be
+// told apart from the sky sliding under a moving lens; a slower shimmer is
+// swamped by that motion and only reads once the sky is nearly still.
+#define SCINT 0.03
+
 uniform sampler2D uCat;
 uniform int   uSteps;
 uniform float uNear;
@@ -120,6 +126,7 @@ uniform float uThetaE0;         // Einstein radius at the reference geometry
 uniform float uLensDist;        // D_L
 uniform float uThetaS;          // angular Schwarzschild radius at this D_L
 uniform float uPixelsPerUnit;
+uniform float uTime;            // seconds, for scintillation only
 
 out vec4 fragColor;
 
@@ -186,6 +193,16 @@ vec3 skySlice(vec2 ang, float dS, float id) {
                     + exp(-(abs(e.y) * 26.0 + abs(e.x) * 2.6) / size);
         v = core + t2.z * 0.05 * spike;
         v *= 2.1;
+
+        // Scintillation, and it belongs in this branch alone. A source small
+        // enough to be a point is covered by a single patch of disturbed
+        // wavefront, so its brightness varies as that patch moves; anything
+        // with angular extent is covered by many patches at once and averages
+        // over them. That is the reason stars twinkle and galaxies do not.
+        // Two beats of incommensurable period, phased off the object's own
+        // hash, so no two stars vary together and none repeats.
+        float ph = (h.x + h.y * 1.7 + id * 0.37) * 6.2831;
+        v *= 1.0 + SCINT * (sin(uTime * 4.3 + ph) + sin(uTime * 6.7 + ph * 2.1));
       } else if (prim < 3.5) {
         // SPIRAL / SERSIC / SHELL: disc-like, separated by two parameters.
         float core = exp(-r * r * 2.4);
@@ -376,7 +393,7 @@ void main() {
 
     var u = {};
     ['uCat', 'uSteps', 'uNear', 'uFar', 'uCellSize', 'uFill', 'uSimSize', 'uLens',
-     'uThetaE0', 'uLensDist', 'uThetaS', 'uPixelsPerUnit'].forEach(function (n) {
+     'uThetaE0', 'uLensDist', 'uThetaS', 'uPixelsPerUnit', 'uTime'].forEach(function (n) {
       u[n] = gl.getUniformLocation(program, n);
     });
 
@@ -407,6 +424,7 @@ void main() {
     var keys = { up: false, down: false };
     var interacted = false;
     var lastTime = 0;
+    var timeSec  = 0;    // wall clock, seconds, drives scintillation
     var frameAvg = 16.7;
     var tuneIn = 60;
     var warmup = 140;    // shader compile and first uploads are not typical frames
@@ -582,6 +600,7 @@ void main() {
       gl.uniform1f(u.uLensDist, st.dist);
       gl.uniform1f(u.uThetaS, 1.5 * st.mass / st.dist);
       gl.uniform1f(u.uPixelsPerUnit, st.pixelsPerUnit);
+      gl.uniform1f(u.uTime, timeSec);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     }
 
@@ -589,6 +608,7 @@ void main() {
       var raw = lastTime ? now - lastTime : 16.7;
       var dt = Math.min(raw / 16.667, 4);
       lastTime = now;
+      timeSec = now / 1000;
 
       /* Adaptive quality. The volume is the expensive path, so give up depth
          samples first and resolution only once those run out. Photographs are

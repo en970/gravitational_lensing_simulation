@@ -39,7 +39,7 @@ Then visit `http://localhost:8000/`.
 
 ### Controls
 
-Left alone for three and a half seconds, the lens drifts on its own along a
+Left alone for a second, the lens drifts on its own along a
 closed path — two sines of incommensurable frequency, each slowly modulated, so
 it stays in frame and never repeats. It is blended in rather than switched to,
 so control is handed over without a jump, and any input takes it straight back.
@@ -138,6 +138,22 @@ angular diameter distances do not combine that way, so these distances order the
 scene correctly without standing for real redshifts. And the deflection at each
 depth is computed independently, rather than accumulating along the ray as true
 multi-plane lensing does.
+
+And the stars scintillate, which nothing in this scene has any business doing.
+Twinkling is a property of the air between the source and the eye rather than of
+the source itself: a point source is covered by a single patch of disturbed
+wavefront, so its brightness varies as that patch drifts, while anything with
+angular extent is covered by many patches at once and averages over them. That
+distinction is real and it is kept — the effect is applied inside the point
+primitive alone, so stars vary and galaxies, nebulae and remnants do not. The
+rest of it is a deliberate departure. An observer placed to see this lensing
+would be above any atmosphere, and real scintillation is orders of magnitude
+faster than the roughly one-second beat used here, which at frame rate would
+read as noise rather than as sky. That beat is still quick enough to be told
+apart from the sky sliding under a moving lens, which a slower one is not: the
+motion swamps it and the shimmer only reads once the lens is nearly still. The
+amplitude is six per cent peak to peak, set by `SCINT` in `src/lensing.js`;
+zero removes it.
 
 ## The sky
 
