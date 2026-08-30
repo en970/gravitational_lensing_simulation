@@ -198,6 +198,42 @@ The catalogue is *faster* than the three hand-written shapes it replaced —
 wider than 0.52 cell units, so most of the 3x3 neighbourhood is rejected before
 the catalogue is read at all.
 
+### The bench in `lab/`
+
+Two pages, neither of them part of the simulation, for one open question: what
+the catalogue's galaxies look like if their light is carried by individual
+stars instead of by a smooth profile. `lab/morphologies.html` puts nine
+morphologies side by side with the resolution, the star density and the
+exposure on sliders. `lab/sky.html` fills a field with them, at five depths,
+and reloads into a different sky each time.
+
+The shape still comes from a density field, the same one a smooth profile would
+use. What changed is the sampling: a jittered lattice of point stars weighted by
+that field, at two scales — a coarse one for the stars bright enough to stand
+alone and a finer one for the crowd just short of resolving — with luminosities
+from a steep power law, so a few stand out and the rest make the glow. An
+unresolved component always remains, because a real core never resolves either.
+
+Two things came out of it that are worth keeping whatever is done with the rest.
+Orientation is the first: drawing cos(i) uniformly is what "randomly oriented in
+space" actually means, and it makes a face-on disc rare — half of all discs are
+inclined past 60 degrees. A field drawn that way looks immediately less arranged
+than one where everything faces the viewer. It needs three things to hold up: a
+disc thickness, or an edge-on galaxy collapses to a single row of pixels; a
+bulge that stays spherical while the disc flattens, which is what reads as
+edge-on rather than as a line; and a dust lane that only appears once the
+inclination is steep enough to be looking through the disc rather than down onto
+it.
+
+The second is that resolution belongs to distance. A galaxy far enough away does
+not resolve into stars at all, so the resolved fraction is ramped across the
+depth slices rather than set once — which is both the honest rendering and the
+cheaper one.
+
+Nothing here is wired into `src/lensing.js` yet. Doing so has a cost to answer
+first: the star lattice is eighteen hash evaluations per object, and the
+simulation already walks up to 32 depths of a 3x3 neighbourhood.
+
 ## Differences between the two versions
 
 The physics is unchanged. The web version differs in its rendering only:

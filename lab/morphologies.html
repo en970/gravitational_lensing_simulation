@@ -1,0 +1,298 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Galaxy lab — resolved star fields</title>
+<style>
+  html, body { margin: 0; background: #05070c; color: #c8cfdb;
+               font: 13px/1.55 -apple-system, "SF Mono", ui-monospace, monospace; }
+  #wrap { position: relative; }
+  canvas { display: block; width: 100vw; height: auto; }
+  #labels { position: absolute; inset: 0; display: grid;
+            grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr);
+            pointer-events: none; }
+  #labels div { padding: 8px 10px; color: #93a2b8; text-shadow: 0 0 6px #000, 0 0 2px #000; }
+  #labels b { color: #e6ecf5; font-weight: 600; }
+  #panel { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px 26px;
+           padding: 14px 18px 18px; border-top: 1px solid #141c27; }
+  #panel label { display: block; margin: 2px 0 2px; color: #8494aa; }
+  #panel input[type=range] { width: 100%; }
+  #panel .v { float: right; color: #e6ecf5; }
+  #panel .hint { grid-column: 1 / -1; margin-top: 6px; color: #63718a; font-size: 11px; }
+  #panel .f { grid-column: span 1; }
+</style>
+
+<div id="wrap">
+  <canvas id="c"></canvas>
+  <div id="labels">
+    <div><b>1</b> grand-design spiral</div>
+    <div><b>2</b> barred spiral</div>
+    <div><b>3</b> flocculent spiral</div>
+    <div><b>4</b> elliptical, E4</div>
+    <div><b>5</b> edge-on disc, dust lane</div>
+    <div><b>6</b> irregular, Magellanic</div>
+    <div><b>7</b> ring galaxy</div>
+    <div><b>8</b> globular cluster</div>
+    <div><b>9</b> interacting pair</div>
+  </div>
+</div>
+
+<div id="panel">
+  <div class="f">
+    <label>resolved into stars <span class="v" id="vres">0.90</span></label>
+    <input type="range" id="res" min="0" max="1" step="0.01" value="0.90">
+  </div>
+  <div class="f">
+    <label>star density <span class="v" id="vgra">60</span></label>
+    <input type="range" id="gra" min="15" max="170" step="1" value="60">
+  </div>
+  <div class="f">
+    <label>exposure <span class="v" id="vexp">1.00</span></label>
+    <input type="range" id="exp" min="0.3" max="2.5" step="0.01" value="1.0">
+  </div>
+  <div class="hint">0 is the smooth profile the simulation draws today; 1 is fully
+  resolved into stars. <a href="sky.html" style="color:#5b6b83">A whole sky of them &rarr;</a></div>
+</div>
+
+<script>
+/* A bench for one question: what do the catalogue's galaxies look like if the
+   light is carried by individual stars instead of by a smooth profile?
+   Every tile computes a density field for one morphology and then samples a
+   jittered lattice of stars weighted by that field, so the shape is the same
+   object the simulation already draws — only the sampling changed. */
+
+var VERT = `#version 300 es
+void main() {
+  vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
+  gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+}`;
+
+var FRAG = `#version 300 es
+precision highp float;
+
+uniform vec2  uRes;
+uniform float uResolve;    // 0 smooth, 1 fully resolved into stars
+uniform float uGrain;      // stars per unit of object radius
+uniform float uExposure;
+out vec4 fragColor;
+
+vec3 hash33(vec3 p) {
+  p = fract(p * vec3(0.1031, 0.1030, 0.0973));
+  p += dot(p, p.yxz + 33.33);
+  return fract((p.xxy + p.yxx) * p.zyx);
+}
+float hash12(vec2 p) { return hash33(vec3(p, 1.7)).x; }
+
+/* Value noise, for breaking arms and clouds up. */
+float vnoise(vec2 p) {
+  vec2 i = floor(p), f = p - i;
+  f = f * f * (3.0 - 2.0 * f);
+  float a = hash12(i), b = hash12(i + vec2(1, 0));
+  float c = hash12(i + vec2(0, 1)), d = hash12(i + vec2(1, 1));
+  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+/* A jittered lattice of point stars. Each cell holds one star, placed at a
+   random offset and given a luminosity from a steep power law, so a few are
+   bright and most are near the floor — which is what a luminosity function
+   looks like. Colour runs from red giants to hot young stars. */
+vec3 starField(vec2 q, float density, float seed, float blue) {
+  vec2 p = q * density;
+  vec2 b = floor(p), f = p - b;
+  vec3 acc = vec3(0.0);
+  for (int j = -1; j <= 1; j++) {
+    for (int i = -1; i <= 1; i++) {
+      vec2  c = b + vec2(float(i), float(j));
+      vec3  h = hash33(vec3(c, seed));
+      vec2  d = f - (vec2(float(i), float(j)) + h.xy);
+      float r2 = dot(d, d);
+      if (r2 > 0.34) continue;
+      float lum = pow(h.z, 2.8);                       // steep: few bright stars
+      float t   = clamp(h.y * 0.85 + blue, 0.0, 1.0);
+      vec3  col = mix(vec3(1.00, 0.68, 0.42), vec3(0.66, 0.78, 1.00), t);
+      acc += col * lum * exp(-r2 * 48.0);
+    }
+  }
+  return acc;
+}
+
+/* ---- morphologies: each returns a density in 0..1 and a colour bias ---- */
+
+float armWave(float a, float r, float arms, float pitch, float phase) {
+  return 0.5 + 0.5 * cos(arms * (a - log(r + 0.05) * pitch) + phase);
+}
+
+/* Tile index -> density, colour bias and an unresolved core. */
+float density(int id, vec2 e, out float blue, out float core) {
+  float r = length(e), a = atan(e.y, e.x);
+  blue = 0.0; core = 0.0;
+  float d = 0.0;
+
+  if (id == 0) {                       // grand-design spiral, two arms
+    float disc = exp(-r / 0.30);
+    float arm  = pow(armWave(a, r, 2.0, 4.4, 0.0), 2.4);
+    d = disc * (0.20 + 0.95 * arm);
+    core = exp(-r * r / 0.006) * 1.1;
+    blue = 0.42 * smoothstep(0.06, 0.34, r);
+
+  } else if (id == 1) {                // barred spiral
+    vec2 q = vec2(e.x * 0.98 - e.y * 0.20, e.x * 0.20 + e.y * 0.98);
+    float bar  = exp(-pow(abs(q.x) / 0.30, 3.2) - pow(abs(q.y) / 0.075, 2.0));
+    float disc = exp(-r / 0.28) * smoothstep(0.16, 0.34, r);
+    float arm  = pow(armWave(a, r, 2.0, 3.0, 1.9), 3.0);
+    d = bar * 0.95 + disc * (0.12 + 1.05 * arm);
+    core = exp(-r * r / 0.004);
+    blue = 0.45 * smoothstep(0.14, 0.40, r);
+
+  } else if (id == 2) {                // flocculent: many broken arm fragments
+    float disc = exp(-r / 0.155);
+    float n    = vnoise(e * 30.0 + 4.0) * 0.52 + vnoise(e * 62.0 + 9.0) * 0.48;
+    float frag = smoothstep(0.46, 0.64, n * (0.58 + 0.66 * armWave(a, r, 2.0, 2.6, 0.7)));
+    d = disc * (0.30 + 1.25 * frag);
+    core = exp(-r * r / 0.006) * 0.80;
+    blue = 0.30 * smoothstep(0.05, 0.32, r);
+
+  } else if (id == 3) {                // elliptical E4, de Vaucouleurs-like
+    vec2 q = vec2(e.x, e.y / 0.60);
+    float rr = length(q);
+    d = exp(-2.4 * pow(rr / 0.34 + 0.02, 0.50));
+    core = exp(-rr * rr / 0.008) * 0.85;
+    blue = -0.22;                      // old, red population
+
+  } else if (id == 4) {                // edge-on disc with a dust lane
+    float disc = exp(-abs(e.x) / 0.26 - abs(e.y) / 0.030);
+    float bulge = exp(-length(vec2(e.x, e.y / 0.55)) / 0.075);
+    float dust  = exp(-pow(abs(e.y + 0.004) / 0.014, 2.0)) * smoothstep(0.34, 0.06, abs(e.x));
+    d = max(disc, bulge * 0.95) * (1.0 - 0.86 * dust);
+    core = bulge * 0.7;
+    blue = 0.14 - 0.30 * smoothstep(0.10, 0.02, abs(e.y));
+
+  } else if (id == 5) {                // irregular, clumpy
+    d = 0.0;
+    for (int k = 0; k < 7; k++) {
+      vec3 h = hash33(vec3(float(k), 3.1, 9.7));
+      vec2 c = (h.xy - 0.5) * vec2(0.46, 0.34);
+      float w = 0.028 + 0.052 * h.z;
+      d += exp(-dot(e - c, e - c) / (w * w)) * (0.55 + 0.75 * h.z);
+    }
+    d *= 0.70;
+    blue = 0.52;                       // starburst: young and blue
+
+  } else if (id == 6) {                // ring galaxy
+    float ring = exp(-pow((r - 0.28) / 0.055, 2.0));
+    float knots = 0.55 + 0.75 * smoothstep(0.45, 0.9, vnoise(vec2(a * 5.0, 3.0)));
+    d = ring * knots + exp(-r * r / 0.004) * 0.55;
+    core = exp(-r * r / 0.003) * 0.8;
+    blue = 0.50 * smoothstep(0.14, 0.26, r) - 0.20 * smoothstep(0.12, 0.0, r);
+
+  } else if (id == 7) {                // globular cluster, King-like
+    d = pow(1.0 + r * r / 0.0055, -1.15);
+    core = exp(-r * r / 0.0016) * 1.2;
+    blue = -0.10;
+
+  } else {                             // interacting pair with a tidal bridge
+    vec2 p1 = e - vec2(-0.20, -0.06), p2 = e - vec2(0.19, 0.09);
+    float g1 = exp(-length(vec2(p1.x, p1.y / 0.72)) / 0.085);
+    float g2 = exp(-length(vec2(p2.x / 0.80, p2.y)) / 0.062);
+    float t  = clamp((e.x + 0.20) / 0.39, 0.0, 1.0);
+    vec2  on = vec2(mix(-0.20, 0.19, t), mix(-0.06, 0.09, t) + 0.10 * sin(t * 3.14159));
+    float bridge = exp(-dot(e - on, e - on) / 0.0022) * 0.55;
+    vec2  tp  = e - vec2(0.26, 0.20);
+    float ta  = atan(tp.y, tp.x);
+    float win = smoothstep(-0.35, 0.30, ta) * smoothstep(3.00, 2.10, ta);
+    float tail = exp(-pow((length(tp) - 0.19) / 0.042, 2.0)) * win * 0.38;
+    d = g1 + g2 + bridge + tail;
+    core = (exp(-dot(p1, p1) / 0.0016) + exp(-dot(p2, p2) / 0.0012)) * 0.8;
+    blue = 0.30 * smoothstep(0.05, 0.30, min(length(p1), length(p2)));
+  }
+
+  return clamp(d, 0.0, 2.2);
+}
+
+void main() {
+  vec2 frag = gl_FragCoord.xy;
+  vec2 tile = vec2(uRes.x / 3.0, uRes.y / 3.0);
+  ivec2 ij  = ivec2(floor(frag / tile));
+  ij = clamp(ij, ivec2(0), ivec2(2));
+  int id = (2 - ij.y) * 3 + ij.x;
+
+  // Object coordinates: -0.5..0.5 across the short side of the tile.
+  vec2 local = (frag - (vec2(ij) + 0.5) * tile) / min(tile.x, tile.y);
+
+  float blue, core;
+  float d = density(id, local, blue, core);
+
+  // The unresolved component: light the eye cannot break into stars. Real
+  // galaxies keep one — the core never resolves — so it is never taken to zero.
+  vec3 smoothCol = mix(vec3(1.00, 0.74, 0.50), vec3(0.72, 0.82, 1.00),
+                       clamp(0.45 + blue, 0.0, 1.0));
+  vec3 unres = smoothCol * (d * mix(1.0, 0.12, uResolve) + core * 0.60);
+
+  /* The resolved component. Two lattices: a coarse one for the stars bright
+     enough to stand alone, a finer one for the crowd that in a real image is
+     just short of resolving. Both are weighted by the density, and cut off
+     below it, so the star field ends where the galaxy ends instead of lying
+     over the whole frame like grain. */
+  float w = smoothstep(0.012, 0.11, d) * clamp(d, 0.0, 1.0);
+  vec3 stars = (starField(local, uGrain,        float(id) * 13.7, blue) * 2.5
+             +  starField(local, uGrain * 2.55, float(id) * 13.7 + 5.3, blue) * 1.15)
+             * w * uResolve;
+
+  vec3 col = (unres + stars) * uExposure;
+
+  // A seam so the tiles read as separate objects.
+  vec2 g = fract(frag / tile);
+  float edge = min(min(g.x, g.y), min(1.0 - g.x, 1.0 - g.y));
+  col *= smoothstep(0.0, 0.004, edge);
+
+  col = col / (1.0 + col);                       // simple tone map
+  fragColor = vec4(pow(col, vec3(1.0 / 2.2)), 1.0);
+}`;
+
+var cv = document.getElementById('c');
+var gl = cv.getContext('webgl2', { antialias: false });
+if (!gl) { document.body.innerHTML = '<p style="padding:24px">WebGL2 yok.</p>'; }
+
+function sh(type, src) {
+  var s = gl.createShader(type);
+  gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+  return s;
+}
+var prog = gl.createProgram();
+gl.attachShader(prog, sh(gl.VERTEX_SHADER, VERT));
+gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FRAG));
+gl.linkProgram(prog);
+if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+gl.bindVertexArray(gl.createVertexArray());
+gl.useProgram(prog);
+
+var u = {};
+['uRes', 'uResolve', 'uGrain', 'uExposure'].forEach(function (n) {
+  u[n] = gl.getUniformLocation(prog, n);
+});
+
+var res = document.getElementById('res'), gra = document.getElementById('gra'),
+    exp = document.getElementById('exp');
+
+function draw() {
+  var w = Math.min(window.innerWidth, 1680);
+  var h = Math.round(w * 0.62);
+  var dpr = Math.min(window.devicePixelRatio || 1, 2);
+  cv.style.width = w + 'px'; cv.style.height = h + 'px';
+  cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+  document.getElementById('wrap').style.width = w + 'px';
+  document.getElementById('wrap').style.height = h + 'px';
+  gl.viewport(0, 0, cv.width, cv.height);
+  gl.uniform2f(u.uRes, cv.width, cv.height);
+  gl.uniform1f(u.uResolve, parseFloat(res.value));
+  gl.uniform1f(u.uGrain, parseFloat(gra.value));
+  gl.uniform1f(u.uExposure, parseFloat(exp.value));
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  document.getElementById('vres').textContent = parseFloat(res.value).toFixed(2);
+  document.getElementById('vgra').textContent = gra.value;
+  document.getElementById('vexp').textContent = parseFloat(exp.value).toFixed(2);
+}
+[res, gra, exp].forEach(function (el) { el.addEventListener('input', draw); });
+window.addEventListener('resize', draw);
+draw();
+</script>

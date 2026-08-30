@@ -1,0 +1,313 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sky — galaxies resolved into stars</title>
+<style>
+  html, body { margin: 0; background: #000; color: #c8cfdb;
+               font: 12px/1.5 ui-monospace, "SF Mono", monospace; overflow: hidden; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+  #panel { position: fixed; left: 12px; bottom: 12px; background: rgba(5,8,13,.86);
+           border: 1px solid #18202c; border-radius: 8px; padding: 11px 13px; width: 218px;
+           backdrop-filter: blur(6px); }
+  #panel label { display: block; margin: 8px 0 1px; color: #8494aa; }
+  #panel input[type=range] { width: 100%; }
+  #panel .v { float: right; color: #e6ecf5; }
+  #panel button { margin-top: 10px; width: 100%; background: #16202c; color: #d5dde8;
+                  border: 1px solid #26303e; border-radius: 5px; padding: 6px; cursor: pointer;
+                  font: inherit; }
+  #panel button:hover { background: #1d2836; }
+  #hud { position: fixed; right: 12px; bottom: 12px; color: #56637a; }
+</style>
+<canvas id="c"></canvas>
+<div id="panel">
+  <label>exposure <span class="v" id="vexp">2.40</span></label>
+  <input type="range" id="exp" min="0.3" max="2.4" step="0.01" value="2.4">
+  <label>star density <span class="v" id="vgra">320</span></label>
+  <input type="range" id="gra" min="40" max="320" step="5" value="320">
+  <label>resolved, nearest <span class="v" id="vrn">0.95</span></label>
+  <input type="range" id="rn" min="0" max="1" step="0.01" value="0.95">
+  <label>resolved, furthest <span class="v" id="vrf">0.90</span></label>
+  <input type="range" id="rf" min="0" max="1" step="0.01" value="0.90">
+  <label>galaxy fraction <span class="v" id="vgf">0.85</span></label>
+  <input type="range" id="gf" min="0.05" max="0.9" step="0.01" value="0.85">
+  <button id="seed">another sky</button>
+  <p style="margin:9px 0 0"><a href="morphologies.html" style="color:#5b6b83">one of each, side by side &rarr;</a></p>
+</div>
+<div id="hud"></div>
+
+<script>
+/* A sky built the way the simulation builds one — objects on a grid whose
+   angular cell size shrinks with distance, several depths added together —
+   except that the galaxies are carried by individual stars rather than by a
+   smooth profile, and each one is given a random orientation in space.
+   Orientation matters more than it looks: drawing cos(i) uniformly is what a
+   random orientation actually means, and it makes a face-on disc rare. Most
+   galaxies in a real field are seen at an angle, and half of them past 60. */
+
+var VERT = `#version 300 es
+void main() {
+  vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
+  gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+}`;
+
+var FRAG = `#version 300 es
+precision highp float;
+
+#define SLICES 5
+
+uniform vec2  uRes;
+uniform float uExposure;
+uniform float uGrain;
+uniform float uResNear;
+uniform float uResFar;
+uniform float uGalFrac;
+uniform float uSeed;
+out vec4 fragColor;
+
+vec3 hash33(vec3 p) {
+  p = fract(p * vec3(0.1031, 0.1030, 0.0973));
+  p += dot(p, p.yxz + 33.33);
+  return fract((p.xxy + p.yxx) * p.zyx);
+}
+float hash12(vec2 p) { return hash33(vec3(p, 1.7)).x; }
+
+float vnoise(vec2 p) {
+  vec2 i = floor(p), f = p - i;
+  f = f * f * (3.0 - 2.0 * f);
+  float a = hash12(i), b = hash12(i + vec2(1, 0));
+  float c = hash12(i + vec2(0, 1)), d = hash12(i + vec2(1, 1));
+  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+/* Blackbody-ish colour for a star, t in 0..1 from cool to hot. */
+vec3 starColour(float t) {
+  return mix(vec3(1.00, 0.66, 0.40), vec3(0.68, 0.79, 1.00), clamp(t, 0.0, 1.0));
+}
+
+/* A jittered lattice of point stars, one per cell, luminosities from a steep
+   power law so a few stand out and the rest make up the glow. */
+vec3 starField(vec2 q, float density, float seed, float blue) {
+  vec2 p = q * density;
+  vec2 b = floor(p), f = p - b;
+  vec3 acc = vec3(0.0);
+  for (int j = -1; j <= 1; j++) {
+    for (int i = -1; i <= 1; i++) {
+      vec2  c = b + vec2(float(i), float(j));
+      vec3  h = hash33(vec3(c, seed));
+      vec2  d = f - (vec2(float(i), float(j)) + h.xy);
+      float r2 = dot(d, d);
+      if (r2 > 0.30) continue;
+      acc += starColour(h.y * 0.85 + blue) * pow(h.z, 2.8) * exp(-r2 * 48.0);
+    }
+  }
+  return acc;
+}
+
+float armWave(float a, float r, float arms, float pitch, float phase) {
+  return 0.5 + 0.5 * cos(arms * (a - log(r + 0.05) * pitch) + phase);
+}
+
+/* The face-on pattern of one morphology, evaluated in the plane of the disc.
+   type: 0 grand design, 1 barred, 2 flocculent, 3 elliptical, 4 irregular,
+   5 ring, 6 globular. */
+float pattern(int type, vec2 q, vec3 h, out float blue) {
+  float r = length(q), a = atan(q.y, q.x);
+  blue = 0.0;
+  if (type == 0) {
+    float arm = pow(armWave(a, r, 2.0, 3.4 + h.x * 2.2, h.y * 6.28), 2.4);
+    blue = 0.42 * smoothstep(0.06, 0.34, r);
+    return exp(-r / 0.30) * (0.20 + 0.95 * arm);
+  } else if (type == 1) {
+    vec2 b2 = q;
+    float bar  = exp(-pow(abs(b2.x) / 0.30, 3.2) - pow(abs(b2.y) / 0.075, 2.0));
+    float arm  = pow(armWave(a, r, 2.0, 3.0, 1.9), 3.0);
+    blue = 0.45 * smoothstep(0.14, 0.40, r);
+    return bar * 0.95 + exp(-r / 0.28) * smoothstep(0.16, 0.34, r) * (0.12 + 1.05 * arm);
+  } else if (type == 2) {
+    float n = vnoise(q * 30.0 + h.xy * 40.0) * 0.52 + vnoise(q * 62.0 + h.yz * 30.0) * 0.48;
+    float frag = smoothstep(0.46, 0.64, n * (0.58 + 0.66 * armWave(a, r, 2.0, 2.6, h.z * 6.28)));
+    blue = 0.30 * smoothstep(0.05, 0.32, r);
+    return exp(-r / 0.155) * (0.30 + 1.25 * frag);
+  } else if (type == 3) {
+    blue = -0.22;
+    return exp(-3.1 * pow(r / 0.20 + 0.02, 0.52)) * 1.35;
+  } else if (type == 4) {
+    float d = 0.0;
+    for (int k = 0; k < 6; k++) {
+      vec3 g = hash33(vec3(float(k), h.x * 31.0, h.y * 17.0));
+      vec2 c = (g.xy - 0.5) * 0.44;
+      float w = 0.030 + 0.055 * g.z;
+      d += exp(-dot(q - c, q - c) / (w * w)) * (0.55 + 0.75 * g.z);
+    }
+    blue = 0.52;
+    return d * 0.70;
+  } else if (type == 5) {
+    float knots = 0.55 + 0.75 * smoothstep(0.45, 0.9, vnoise(vec2(a * 5.0, h.x * 20.0)));
+    blue = 0.50 * smoothstep(0.14, 0.26, r) - 0.20 * smoothstep(0.12, 0.0, r);
+    return exp(-pow((r - 0.28) / 0.055, 2.0)) * knots + exp(-r * r / 0.004) * 0.55;
+  }
+  blue = -0.10;
+  return pow(1.0 + r * r / 0.0055, -1.15);
+}
+
+/* Is this morphology a disc? Discs are flattened by inclination and carry a
+   dust lane when seen edge-on; spheroids are not and do not. */
+bool isDisc(int type) { return type <= 2; }
+
+/* One galaxy, at an orientation. e is the offset from its centre in units of
+   its own radius. */
+vec3 galaxy(vec2 e, vec3 h, float resolve, float grain) {
+  vec3 h2 = hash33(h * 91.7 + 3.3);
+  int type;
+  float t = h2.x;
+  if      (t < 0.26) type = 0;    // grand design
+  else if (t < 0.44) type = 1;    // barred
+  else if (t < 0.58) type = 2;    // flocculent
+  else if (t < 0.74) type = 3;    // elliptical
+  else if (t < 0.86) type = 4;    // irregular
+  else if (t < 0.90) type = 5;    // ring
+  else               type = 6;    // globular
+
+  /* Orientation. cos(i) uniform is what "randomly oriented in space" means,
+     so an inclination past 60 degrees is the common case and face-on is rare.
+     A disc is compressed along its minor axis by cos(i); a spheroid keeps a
+     mild, fixed flattening of its own instead. */
+  float pa   = h2.y * 6.28318;
+  float cosi = isDisc(type) ? max(h2.z, 0.055) : mix(0.55, 1.0, h2.z);
+  float cp = cos(pa), sp = sin(pa);
+  vec2  q  = vec2(e.x * cp + e.y * sp, -e.x * sp + e.y * cp);
+  vec2  qd = vec2(q.x, q.y / cosi);          // back to the plane of the disc
+
+  float blue;
+  float d = pattern(type, qd, h2, blue);
+
+  /* A disc is thin but not flat, so an edge-on one is a line of finite width;
+     without this the whole galaxy would collapse onto a single row of pixels. */
+  if (isDisc(type)) {
+    float thick = 0.055;
+    d *= exp(-pow(abs(q.y) / (thick + 0.55 * cosi), 2.6));
+    /* The bulge is a sphere and does not flatten with the disc. */
+    d += exp(-length(vec2(q.x, q.y / mix(0.62, 1.0, cosi))) / 0.070) * 0.85;
+    /* Dust, in the plane of the disc, and only visible once inclined enough
+       to look through the disc rather than down onto it. */
+    float lane = exp(-pow(q.y / 0.024, 2.0)) * smoothstep(0.55, 0.12, cosi)
+               * smoothstep(0.46, 0.10, abs(q.x));
+    d *= 1.0 - 0.80 * lane;
+  }
+  d *= smoothstep(0.60, 0.10, length(e));   // fades across the whole footprint
+  d = clamp(d, 0.0, 2.2);
+
+  vec3 smoothCol = mix(vec3(1.00, 0.74, 0.50), vec3(0.72, 0.82, 1.00),
+                       clamp(0.45 + blue, 0.0, 1.0));
+  vec3 unres = smoothCol * d * mix(1.0, 0.14, resolve);
+
+  float w = smoothstep(0.0008, 0.040, d) * pow(clamp(d, 0.0, 1.0), 0.70);
+  vec3 stars = (starField(q * vec2(1.0, 1.0 / max(cosi, 0.16)), grain, h2.x * 53.1, blue) * 2.5
+             +  starField(q * vec2(1.0, 1.0 / max(cosi, 0.16)), grain * 2.55, h2.x * 53.1 + 5.3, blue) * 1.15)
+             * w * resolve;
+
+  return unres + stars;
+}
+
+/* Reddening with distance, as in the simulation. */
+vec3 distanceTint(float dS) {
+  return mix(vec3(1.0), vec3(1.00, 0.74, 0.55), smoothstep(0.35, 2.6, dS));
+}
+
+void main() {
+  vec2 ang = (gl_FragCoord.xy - 0.5 * uRes) / min(uRes.x, uRes.y);
+  vec3 acc = vec3(0.0);
+
+  for (int s = 0; s < SLICES; s++) {
+    float u  = float(s) / float(SLICES - 1);
+    float dS = exp(mix(log(0.55), log(3.60), u));       // logarithmic in depth
+    float resolve = mix(uResNear, uResFar, u);
+    /* Objects further away are smaller, fainter and redder. Exposure is set
+       here rather than per object: where a galaxy sits is what decides how
+       bright it should be. */
+    float bright = uExposure * pow(0.42 / dS, 1.35);
+
+    float cell = 0.30 / dS;
+    vec2  p    = ang / cell;
+    vec2  base = floor(p);
+    vec2  f    = p - base;
+
+    for (int j = -1; j <= 1; j++) {
+      for (int i = -1; i <= 1; i++) {
+        vec2 c = base + vec2(float(i), float(j));
+        vec3 h = hash33(vec3(c, float(s) * 7.1 + uSeed));
+        if (h.z > 0.55) continue;
+
+        vec2  delta = f - (vec2(float(i), float(j)) + h.xy);
+        float isGal = step(hash33(vec3(c, 99.0 + uSeed)).x, uGalFrac);
+
+        float size = mix(0.013, 0.085 + 0.30 * h.y * h.y * h.y, isGal);
+        if (dot(delta, delta) > size * size * 2.94) continue;
+
+        vec3 col;
+        if (isGal > 0.5) {
+          col = galaxy(delta / size * 0.35, vec3(c, float(s)) + uSeed, resolve, uGrain);
+        } else {
+          float r2 = dot(delta, delta) / (size * size);
+          col = starColour(h.y) * exp(-r2 * 1.9) * 2.6;
+        }
+        acc += col * bright * distanceTint(dS);
+      }
+    }
+  }
+
+  acc = acc / (1.0 + acc);
+  fragColor = vec4(pow(acc, vec3(1.0 / 2.2)), 1.0);
+}`;
+
+var cv = document.getElementById('c');
+var gl = cv.getContext('webgl2', { antialias: false });
+function sh(t, src) {
+  var s = gl.createShader(t); gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+  return s;
+}
+var prog = gl.createProgram();
+gl.attachShader(prog, sh(gl.VERTEX_SHADER, VERT));
+gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FRAG));
+gl.linkProgram(prog);
+if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+gl.bindVertexArray(gl.createVertexArray());
+gl.useProgram(prog);
+
+var u = {};
+['uRes','uExposure','uGrain','uResNear','uResFar','uGalFrac','uSeed'].forEach(function (n) {
+  u[n] = gl.getUniformLocation(prog, n);
+});
+
+var ids = { exp: 'vexp', gra: 'vgra', rn: 'vrn', rf: 'vrf', gf: 'vgf' };
+var seed = Math.random() * 500;   // a different sky on every reload
+
+function draw() {
+  var dpr = Math.min(window.devicePixelRatio || 1, 2);
+  cv.width  = Math.round(window.innerWidth  * dpr);
+  cv.height = Math.round(window.innerHeight * dpr);
+  gl.viewport(0, 0, cv.width, cv.height);
+  gl.uniform2f(u.uRes, cv.width, cv.height);
+  gl.uniform1f(u.uExposure, parseFloat(document.getElementById('exp').value));
+  gl.uniform1f(u.uGrain,    parseFloat(document.getElementById('gra').value));
+  gl.uniform1f(u.uResNear,  parseFloat(document.getElementById('rn').value));
+  gl.uniform1f(u.uResFar,   parseFloat(document.getElementById('rf').value));
+  gl.uniform1f(u.uGalFrac,  parseFloat(document.getElementById('gf').value));
+  gl.uniform1f(u.uSeed, seed);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  Object.keys(ids).forEach(function (k) {
+    var el = document.getElementById(k);
+    document.getElementById(ids[k]).textContent =
+      k === 'gra' ? el.value : parseFloat(el.value).toFixed(2);
+  });
+}
+Object.keys(ids).forEach(function (k) {
+  document.getElementById(k).addEventListener('input', draw);
+});
+document.getElementById('seed').addEventListener('click', function () {
+  seed = Math.random() * 500; draw();
+});
+window.addEventListener('resize', draw);
+draw();
+</script>
