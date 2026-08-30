@@ -189,9 +189,22 @@ than picked by hand.
 Every type reduces to one of eight drawing primitives plus parameters, so shader
 cost is independent of how long the catalogue grows, and the list is packed into
 a 256-row table with types repeated in proportion to weight — selection is a
-single `texelFetch` with no search. Objects are inclined by a random axis ratio,
-so most present as ellipses rather than face-on discs, and everything reddens
-with distance.
+single `texelFetch` with no search, and everything reddens with distance.
+
+Discs are inclined by drawing cos(i) uniformly, which is what a random
+orientation in space means: half of all discs are past sixty degrees and a
+face-on one is the rare case. A spheroid is not a disc and keeps the intrinsic
+flattening its type carries. Two things make an inclined disc read as a galaxy
+rather than as a streak — a bulge that stays spherical while the disc flattens,
+and a dust lane that only appears once the disc is steep enough to be looked
+through rather than down onto.
+
+Near enough, a galaxy stops being a profile and becomes the stars in it. The
+shape is unchanged, the same density the smooth profile drew; what the lattice
+replaces is how that density is sampled. Some of the smooth light always stays,
+because a core never resolves. Whether it happens at all is decided by apparent
+size and distance together: below about eight pixels across there are no stars
+to show, only a smudge, and the four hashes buy nothing.
 
 The catalogue is *faster* than the three hand-written shapes it replaced —
 9.1 ms against 15.5 ms per frame at 1280x860 on an M1 — because nothing in it is
@@ -230,9 +243,12 @@ not resolve into stars at all, so the resolved fraction is ramped across the
 depth slices rather than set once — which is both the honest rendering and the
 cheaper one.
 
-Nothing here is wired into `src/lensing.js` yet. Doing so has a cost to answer
-first: the star lattice is eighteen hash evaluations per object, and the
-simulation already walks up to 32 depths of a 3x3 neighbourhood.
+Both results are now in `src/lensing.js`. The lattice that went in is smaller
+than the bench's — four cells rather than nine, with each star jittered inside
+the middle of its cell and narrow enough that it cannot reach the far side of a
+neighbour, so the ring of cells a 3x3 would add contributes nothing and costs
+five hashes to find that out. The bench keeps the 3x3, since it has one object
+to draw and no depth loop to pay for.
 
 ## Differences between the two versions
 

@@ -113,6 +113,10 @@ precision highp float;
 // swamped by that motion and only reads once the sky is nearly still.
 #define SCINT 0.03
 
+// A resolved star should land on a pixel or two whatever the object's apparent
+// size, so the lattice is set from that size rather than fixed.
+#define STAR_PX 5.0
+
 uniform sampler2D uCat;
 uniform int   uSteps;
 uniform float uNear;
@@ -134,6 +138,31 @@ vec3 hash33(vec3 p) {
   p = fract(p * vec3(0.1031, 0.1030, 0.0973));
   p += dot(p, p.yxz + 33.33);
   return fract((p.xxy + p.yxx) * p.zyx);
+}
+
+/* A galaxy resolved into the stars that make it. One jittered lattice, a star
+   per cell, luminosities from a steep power law so a few stand out and the rest
+   carry the glow. Nine hashes, which is why it is spent only where it shows:
+   a galaxy far enough away does not resolve into anything. */
+float starLattice(vec2 q, float grain, float seed) {
+  vec2 p = q * grain;
+  vec2 b = floor(p), f = p - b;
+  float acc = 0.0;
+  /* Four cells, not nine. A star is jittered inside the middle of its cell and
+     is narrow enough that it cannot reach the far side of a neighbour, so the
+     ring of cells a 3x3 would add contributes nothing measurable and costs
+     five hashes to find that out. */
+  for (int j = 0; j <= 1; j++) {
+    for (int i = 0; i <= 1; i++) {
+      vec2  c  = b + vec2(float(i), float(j));
+      vec3  hs = hash33(vec3(c, seed));
+      vec2  dd = f - (vec2(float(i), float(j)) + 0.28 + hs.xy * 0.44);
+      float r2 = dot(dd, dd);
+      if (r2 > 0.30) continue;
+      acc += hs.z * hs.z * hs.z * exp(-r2 * 46.0);
+    }
+  }
+  return acc;
 }
 
 // Reddening with distance, applied on top of an object's own colour.
@@ -177,12 +206,25 @@ vec3 skySlice(vec2 ang, float dS, float id) {
       float reach = size * 3.2 + 0.006;
       if (d > reach) continue;
 
-      // Inclination: squash along a random axis, straight from the hash, so
-      // most objects present as ellipses. No trigonometry.
+      // Orientation. A disc's observed axis ratio is cos(i), and drawing cos(i)
+      // uniformly is what "randomly oriented in space" means: half of all discs
+      // are inclined past sixty degrees, so a face-on one is the rare case. A
+      // spheroid is not a disc and keeps the intrinsic flattening of its type.
       vec2  ax = normalize(h.xy * 2.0 - 1.0 + 1e-4);
-      vec2  e  = vec2(dot(delta, ax), dot(delta, vec2(-ax.y, ax.x)));
-      e.y /= max(0.12, 1.0 - t2.y);
+      vec2  sc = vec2(dot(delta, ax), dot(delta, vec2(-ax.y, ax.x)));
+      bool  isDisc = prim > 0.5 && prim < 1.5;
+      float cosi = isDisc ? max(fract(h.x * 41.3 + h.y * 7.7), 0.09)
+                          : max(0.12, 1.0 - t2.y);
+      vec2  e = vec2(sc.x, sc.y / cosi);
       float r = length(e) / size;
+
+      /* Whether this object resolves into stars at all, and into how many.
+         Apparent size decides it, which is the same thing distance decides:
+         a galaxy small enough on the screen has no stars to show, only a
+         smudge, and spending nine hashes on it buys nothing. */
+      float pxR   = size * cell * uPixelsPerUnit;
+      float grain = clamp(pxR / STAR_PX, 3.0, 70.0);
+      float resolve = smoothstep(1.05, 0.32, dS) * smoothstep(8.0, 22.0, pxR);
 
       float v;
 
@@ -224,6 +266,22 @@ vec3 skySlice(vec2 ang, float dS, float id) {
           core *= 0.10;
         }
         v = max(core, disc * shape);
+
+        if (isDisc) {
+          // The bulge is a sphere and does not flatten with the disc. It is
+          // what makes an edge-on galaxy read as a galaxy rather than a line.
+          float rb = length(vec2(sc.x, sc.y / mix(0.70, 1.0, cosi))) / size;
+          v = max(v, exp(-rb * rb * 3.0) * 0.90);
+
+          // Dust lies in the plane of the disc, so it is only in the way once
+          // the disc is inclined enough to be looked through rather than down
+          // onto. Face-on, there is nothing between the stars and the eye.
+          float ly   = sc.y / (size * 0.11);
+          float lane = exp(-ly * ly)
+                     * smoothstep(0.52, 0.10, cosi)
+                     * smoothstep(2.4, 0.5, abs(sc.x) / size);
+          v *= 1.0 - 0.72 * lane;
+        }
       } else {
         // CLUMPY / DIFFUSE / BILOBE / HALO
         float disc = exp(-r * 1.5);
@@ -238,6 +296,16 @@ vec3 skySlice(vec2 ang, float dS, float id) {
         } else {
           v = max(exp(-r * r * 5.0), exp(-r * 1.1) * 0.42);  // core in a halo
         }
+      }
+
+      /* Resolve it into stars, if it is near enough to resolve into anything.
+         The shape is unchanged — it is the same density the smooth profile
+         drew — and what the lattice replaces is the sampling of it. Some of
+         the smooth light always stays, because a core never resolves. */
+      if (prim > 0.5 && resolve > 0.01) {
+        float w  = smoothstep(0.006, 0.10, v) * sqrt(min(v, 1.0));
+        float sf = starLattice(e / size, grain, float(row) * 1.7 + id * 5.3);
+        v = mix(v, v * 0.28 + sf * w * 3.4, resolve);
       }
 
       vec3 col = mix(t0.rgb, t1.rgb, smoothstep(0.10, 1.30, r));
@@ -578,6 +646,8 @@ void main() {
     }
     canvas.addEventListener('pointerup', releasePointer);
     canvas.addEventListener('pointercancel', releasePointer);
+
+    ambBtn.addEventListener('click', function () { setAmbient(!st.ambient); });
 
     canvas.addEventListener('wheel', function (e) {
       e.preventDefault();
