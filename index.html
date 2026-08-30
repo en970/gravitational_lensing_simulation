@@ -12,11 +12,30 @@
 
 <section class="stage" id="stage-section">
   <canvas id="stage"></canvas>
+  <canvas id="kerr-stage"></canvas>
+
+  <div class="kerr-ui">
+    <pre id="kerr-hud"></pre>
+    <div class="kerr-controls">
+      <div class="control">
+        <label for="kerr-spin">Spin</label>
+        <input id="kerr-spin" type="range" min="0" max="0.998" step="0.002" value="0.9">
+        <output id="kerr-spin-value" for="kerr-spin"></output>
+      </div>
+      <div class="control">
+        <label for="kerr-incl">Inclination</label>
+        <input id="kerr-incl" type="range" min="5" max="90" step="1" value="84">
+        <output id="kerr-incl-value" for="kerr-incl"></output>
+      </div>
+    </div>
+    <p class="kerr-keys">Scroll to move the camera. Escape leaves.</p>
+  </div>
 
   <div class="overlay">
     <header class="masthead">
       <h1>Gravitational Lensing</h1>
       <div class="masthead-actions">
+        <button class="pill" id="kerr-toggle" type="button" aria-pressed="false">Kerr</button>
         <button class="pill" id="ambient-toggle" type="button" aria-pressed="false">Ambient</button>
         <a class="source" href="https://github.com/en970/gravitational_lensing_simulation" target="_blank" rel="noopener">Source</a>
       </div>
@@ -214,5 +233,6 @@
 
 <script src="src/catalogue.js"></script>
 <script src="src/lensing.js"></script>
+<script src="src/kerr.js"></script>
 </body>
 </html>

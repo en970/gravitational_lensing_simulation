@@ -445,3 +445,83 @@ body.show-exit-hint .exit-hint { opacity: 1; }
   background: var(--ink);
   border-color: var(--ink);
 }
+
+
+/* ---- Kerr mode ------------------------------------------------------- */
+
+#kerr-stage {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: none;
+  background: #000;
+  z-index: 40;
+}
+
+.kerr-ui {
+  position: fixed;
+  inset: 0;
+  display: none;
+  pointer-events: none;
+  z-index: 41;
+}
+
+body.is-kerr #kerr-stage,
+body.is-kerr .kerr-ui { display: block; }
+
+/* The 2D scene keeps its masthead so the mode can be left again. */
+body.is-kerr .panel,
+body.is-kerr .hint,
+body.is-kerr .scroll-cue { opacity: 0; pointer-events: none; }
+
+body.is-kerr .overlay { z-index: 42; }
+
+#kerr-hud {
+  position: absolute;
+  left: 22px;
+  bottom: 22px;
+  margin: 0;
+  font: 12px/1.55 ui-monospace, "SF Mono", Menlo, monospace;
+  color: rgba(206, 216, 232, 0.72);
+  text-shadow: 0 0 8px rgba(0, 0, 0, 0.9);
+  white-space: pre;
+}
+
+.kerr-controls {
+  position: absolute;
+  right: 22px;
+  bottom: 22px;
+  width: 260px;
+  pointer-events: auto;
+  display: grid;
+  gap: 10px;
+}
+
+.kerr-controls .control {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  font: 11px/1.4 ui-monospace, "SF Mono", Menlo, monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(206, 216, 232, 0.6);
+}
+
+.kerr-controls input[type="range"] { width: 100%; }
+
+.kerr-keys {
+  position: absolute;
+  right: 22px;
+  bottom: 96px;
+  margin: 0;
+  font: 11px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+  color: rgba(160, 176, 198, 0.5);
+}
+
+@media (max-width: 640px) {
+  .kerr-controls { left: 22px; right: 22px; width: auto; }
+  #kerr-hud { bottom: 150px; }
+  .kerr-keys { display: none; }
+}

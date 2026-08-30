@@ -167,6 +167,94 @@ motion swamps it and the shimmer only reads once the lens is nearly still. The
 amplitude is six per cent peak to peak, set by `SCINT` in `src/lensing.js`;
 zero removes it.
 
+## Kerr mode
+
+The thin lens is a weak-field result about a mass that does not rotate. It
+cannot produce a photon ring, it cannot produce higher-order images, and it has
+nowhere to put rotation at all. **Kerr** drops it. Every pixel fires a ray
+backwards from the camera and the ray is integrated as a null geodesic of the
+Kerr metric in Boyer-Lindquist coordinates, carrying the Carter constant — the
+physics of the renderer built for *Interstellar* (James, von Tunzelmann,
+Franklin & Thorne, *Class. Quantum Grav.* **32** 065001, 2015).
+
+With *M* = 1, Σ = r² + a²cos²θ, Δ = r² − 2r + a², and for a photon of energy *E*
+and angular momentum *L*, writing *P* = (r²+a²)E − aL and *W* = L/sinθ − aE sinθ,
+
+    2H = [ Δ p_r² + p_θ² + W² − P²/Δ ] / Σ
+
+and a null geodesic keeps 2H = 0. Because it does, the ∂Σ terms in the
+derivatives cancel against it and what has to be integrated is short:
+
+    dr/dλ   = Δ p_r / Σ
+    dθ/dλ   = p_θ / Σ
+    dφ/dλ   = ( W/sinθ + aP/Δ ) / Σ
+    dp_r/dλ = −[ (2r−2)p_r² − 4rEP/Δ + (2r−2)P²/Δ² ] / (2Σ)
+    dp_θ/dλ = W cosθ ( L/sin²θ + aE ) / Σ
+
+The camera is a locally non-rotating observer, so it remains defined inside the
+ergosphere, where no static one does.
+
+### Verified before it went into a shader
+
+The shadow of a Kerr hole has a closed form. Its rim is the locus of spherical
+photon orbits (Bardeen 1973), and for an equatorial observer it runs from
+
+| a/M | rim, prograde side | rim, retrograde side |
+|---|---|---|
+| 0.000 | −5.19615 | 5.19615 |
+| 0.500 | −4.0953 | 6.1379 |
+| 0.900 | −2.8440 | 6.8310 |
+| 0.998 | −2.1107 | 6.9958 |
+
+At a = 0 that is ±3√3, exactly. Integrating the equations above and bisecting
+for the capture boundary reproduces every one of them to four decimals. The
+asymmetry is the point: a rotating hole drags light around with it, so the
+shadow is displaced and flattened on the side where photons orbit with the
+spin.
+
+That side is also where the step size shows. Photons there orbit at
+r_ph = 2M[1 + cos((2/3)arccos(−a))], which at a = 0.998 is 1.0739M, just outside
+a horizon at 1.0632M. A step scaled only by height above the horizon walks
+straight past the turn — it put the prograde rim at 5.899 instead of 6.138, an
+error of four per cent that vanished when the step was scaled by curvature as
+well.
+
+### Where it is approximate
+
+The axis is a coordinate singularity of Boyer-Lindquist rather than a physical
+one, and a ray carrying angular momentum never reaches it: Θ(θ) goes negative
+first and the ray turns. The restoring term that produces the turn grows as
+L²/sin³θ, which no step this can afford will resolve, so the turn is enforced
+at a small angle from the axis instead of resolved. Without that, the projected
+spin axis is a line of noise across the frame; with it, a thin trace of one
+remains.
+
+A ray still circling when its step budget runs out is treated as captured. Near
+the rim that is nearly always right — those orbits are bound — but it means the
+outermost higher-order images are darker than they should be, and the band of
+many-orbit images just outside the shadow is sampled sparsely rather than
+resolved.
+
+It also costs accuracy on the prograde rim, and it is worth being exact about
+how much. Measuring the rendered shadow's horizontal extent and converting back
+to impact parameter, at 190 steps (screen left is the prograde side here, the
+opposite of Bardeen's sign convention):
+
+| a/M | rendered | closed form | error |
+|---|---|---|---|
+| 0.000 | 5.054 / 5.123 | 5.196 / 5.196 | 2% |
+| 0.500 | 5.884 / 4.188 | 6.138 / 4.095 | 4% / 2% |
+| 0.900 | 6.438 / 3.461 | 6.831 / 2.844 | 6% / 22% |
+| 0.998 | 6.611 / 2.977 | 6.996 / 2.111 | 6% / 41% |
+
+The retrograde rim holds to a few per cent everywhere. The prograde one is
+pushed outwards, by 0.87M at a = 0.998, and always in the same direction: rays
+that would have squeezed past the photon orbit run out of steps first and are
+counted as swallowed, so the shadow grows on exactly the side where the orbit
+is hardest to resolve. The reference integrator, given a step an order of
+magnitude smaller, lands on the closed form to four decimals on both sides —
+this is a budget, not a formula.
+
 ## The sky
 
 The background is generated from a hash inside the shader rather than from a
