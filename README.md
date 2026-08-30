@@ -42,7 +42,15 @@ Then visit `http://localhost:8000/`.
 Left alone for a second, the lens drifts on its own along a
 closed path — two sines of incommensurable frequency, each slowly modulated, so
 it stays in frame and never repeats. It is blended in rather than switched to,
-so control is handed over without a jump, and any input takes it straight back.
+so control is handed over without a jump.
+
+Taking it back needs a click. Moving the pointer is not enough, and that is
+deliberate: the mass and the distance are worth changing while the lens wanders
+on its own, and a cursor that reclaimed it on the way to a slider would make
+that impossible. The mass, the distance and the sliders all stay live while it
+drifts and none of them interrupts it. Before the first interaction of the
+session the pointer does take it back, since nobody yet has any reason to know
+a click is what does.
 
 An earlier version wrapped the lens around the edges of the field instead. That
 looked like the page reloading, and the reason is worth recording: the
@@ -55,6 +63,7 @@ cursor, and ignores the pointer — a screensaver. A tap, a click or Escape exit
 
 | Action | Desktop | Touch |
 |---|---|---|
+| Take the lens back from the drift | Click | Tap |
 | Move the mass across the sky | Move the cursor | Drag |
 | Move it along the line of sight | Scroll | Pinch |
 | Change the mass | Up and down arrow keys | — |

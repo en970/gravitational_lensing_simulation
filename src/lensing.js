@@ -433,6 +433,7 @@ void main() {
     var idleSince = 0;
     var exitHintUntil = 0;
     var drift = 0;     // 0 under manual control, eases to 1 on the path
+    var handed = false;  // true once the drift owns the lens; only a click revokes it
     var driftPhase = Math.random() * 400;
 
     function resize() {
@@ -461,6 +462,11 @@ void main() {
 
     function moveLens(cx, cy) {
       if (st.ambient) return;   // the path owns the lens in ambient mode
+      if (handed) {
+        // The drift owns it too, and the pointer alone does not take it back.
+        if (interacted) return;
+        reclaim();              // except the very first time, before anyone knows that
+      }
       var p = toSim(cx, cy);
       if (!p) return;
       st.lensXTarget = p.x;
@@ -491,15 +497,26 @@ void main() {
         drift = 0;
         exitHintUntil = performance.now() + 2600;
       } else {
-        drift = 0;
-        idleSince = performance.now();
+        reclaim();
       }
+    }
+
+    /* A click, and only a click, takes the lens back from the drift. Changing
+       the mass or the distance does not, and that is the point: those are worth
+       doing while the lens wanders on its own, and a cursor crossing the screen
+       on its way to a slider would otherwise snatch it back every time. */
+    function reclaim() {
+      handed = false;
+      drift = 0;
+      idleSince = performance.now();
     }
 
     function noteInteraction() {
       if (st.ambient) return;   // pointer motion must not cancel the path
-      idleSince = performance.now();
-      drift = 0;
+      if (!handed) {
+        idleSince = performance.now();
+        drift = 0;
+      }
       if (interacted) return;
       interacted = true;
       hint.classList.add('is-hidden');
@@ -534,6 +551,7 @@ void main() {
         pinchStart = { dist: Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y),
                        lensDist: st.distTarget };
       } else if (pointers.size === 1) {
+        reclaim();
         moveLens(e.clientX, e.clientY);
       }
     });
@@ -637,8 +655,9 @@ void main() {
          over without a jump. */
       var secs = Math.min(raw, 100) / 1000;
       driftPhase += secs;
-      var wantDrift = st.ambient || (idleSince && now - idleSince > IDLE_MS);
+      var wantDrift = st.ambient || handed || (idleSince && now - idleSince > IDLE_MS);
       if (wantDrift) {
+        if (!st.ambient) handed = true;
         drift = Math.min(1, drift + secs / DRIFT_EASE);
         var p = driftPoint(driftPhase);
         st.lensXTarget += (p.x - st.lensXTarget) * drift * Math.min(1, secs * 3.0);
