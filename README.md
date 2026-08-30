@@ -117,7 +117,10 @@ Three consequences, all visible on screen:
   depths do not coincide and the scene reads as depth rather than as sheets.
 - **A source in front of the lens is not lensed, and is not hidden by it.** When
   *D_S* ≤ *D_L* there is no deflection, and the horizon does not occlude that
-  plane either, since it lies behind it. Push the lens away and the planes drop
+  plane either, since it lies behind it. The distance slider starts below the
+  nearest shell for that reason: with a floor above it, the two closest shells
+  sat in front of the lens in every configuration a viewer could reach, and no
+  setting of anything would bend them. Push the lens away and the planes drop
   out one at a time, nearest first, until the foreground stars sit undisturbed
   over a black disc.
 - **The horizon subtends a smaller angle from further away.** With r_s = 1.5M in

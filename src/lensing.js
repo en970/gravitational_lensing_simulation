@@ -59,7 +59,7 @@
   /* Lens distance D_L. Bounded away from zero: θ_E² and r_s/D_L both diverge
      as D_L → 0. The upper bound sits past the far end of the sampled volume,
      so the lens can be pushed behind everything. */
-  var DIST_MIN = 0.20;
+  var DIST_MIN = 0.14;   // below DEPTH_NEAR, so every shell can be lensed
   var DIST_MAX = 4.00;
   var DIST_REFERENCE = 0.50;    /* where the geometric factor equals 1 */
   var DIST_INITIAL = DIST_REFERENCE;
@@ -115,7 +115,7 @@ precision highp float;
 
 // A resolved star should land on a pixel or two whatever the object's apparent
 // size, so the lattice is set from that size rather than fixed.
-#define STAR_PX 5.0
+#define STAR_PX 4.2
 
 uniform sampler2D uCat;
 uniform int   uSteps;
@@ -131,6 +131,7 @@ uniform float uLensDist;        // D_L
 uniform float uThetaS;          // angular Schwarzschild radius at this D_L
 uniform float uPixelsPerUnit;
 uniform float uTime;            // seconds, for scintillation only
+uniform float uSeed;            // fixed for the session, different every load
 
 out vec4 fragColor;
 
@@ -185,7 +186,7 @@ vec3 skySlice(vec2 ang, float dS, float id) {
   for (int j = -1; j <= 1; j++) {
     for (int i = -1; i <= 1; i++) {
       vec2 c = base + vec2(float(i), float(j));
-      vec3 h = hash33(vec3(c, id));
+      vec3 h = hash33(vec3(c, id + uSeed));
       if (h.z > uFill) continue;
 
       vec2  delta = f - (vec2(float(i), float(j)) + h.xy);
@@ -305,7 +306,7 @@ vec3 skySlice(vec2 ang, float dS, float id) {
       if (prim > 0.5 && resolve > 0.01) {
         float w  = smoothstep(0.006, 0.10, v) * sqrt(min(v, 1.0));
         float sf = starLattice(e / size, grain, float(row) * 1.7 + id * 5.3);
-        v = mix(v, v * 0.28 + sf * w * 3.4, resolve);
+        v = mix(v, v * 0.42 + sf * w * 2.5, resolve);
       }
 
       vec3 col = mix(t0.rgb, t1.rgb, smoothstep(0.10, 1.30, r));
@@ -461,7 +462,8 @@ void main() {
 
     var u = {};
     ['uCat', 'uSteps', 'uNear', 'uFar', 'uCellSize', 'uFill', 'uSimSize', 'uLens',
-     'uThetaE0', 'uLensDist', 'uThetaS', 'uPixelsPerUnit', 'uTime'].forEach(function (n) {
+     'uThetaE0', 'uLensDist', 'uThetaS', 'uPixelsPerUnit', 'uTime',
+     'uSeed'].forEach(function (n) {
       u[n] = gl.getUniformLocation(program, n);
     });
 
@@ -471,6 +473,9 @@ void main() {
     gl.uniform1f(u.uNear, DEPTH_NEAR);
     gl.uniform1f(u.uFar, DEPTH_FAR);
     gl.uniform1f(u.uCellSize, 27.0);
+    /* One sky per visit. Set once and never again: the hash is what the sky is,
+       so moving it mid-session would rebuild every object on the screen. */
+    gl.uniform1f(u.uSeed, Math.random() * 512.0);
     gl.uniform1f(u.uFill, 0.26);
     var steps = highRes ? STEPS_HIGH : STEPS_LOW;
     gl.uniform1i(u.uSteps, steps);
